@@ -12,14 +12,23 @@ from contextlib import contextmanager
 from collections import namedtuple
 from urllib.parse import urlparse
 import random
+from ipaddress import ip_address
 from string import ascii_letters, digits
+from time import sleep
+import socket
+from datetime import timedelta, datetime, timezone
 
 from azure.common.client_factory import get_client_from_auth_file, get_client_from_cli_profile
 from azure.mgmt.resource import ResourceManagementClient
 from azure.mgmt.storage import StorageManagementClient
+from azure.mgmt.rdbms.mysql import MySQLManagementClient
 from azure.storage.blob import BlockBlobService
 from msrestazure.azure_exceptions import ClientException
 from environs import Env
+
+from sqlalchemy import create_engine
+from sqlalchemy.engine.base import Engine
+from sqlalchemy.exc import SQLAlchemyError
 
 from tests.metrics import metrics
 
@@ -41,9 +50,11 @@ LOG.addHandler(LOG_STREAM_HANDLER)
 
 PREFIX = ENV('RESOURCE_PREFIX', 'hackaton')
 RESOURCE_GROUP_LOCATION = ENV('RESOURCE_GROUP_LOCATION', 'eastus')
+MYSQL_PORT = 3306
 
 ObjectStorageHandle = namedtuple('ObjectStorageHandle', ['blob_client', 'container_name'])
 StorageHandle = namedtuple('StorageHandle', ['account_name', 'account_key'])
+MysqlHandle = namedtuple('MysqlHandle', ['user', 'password', 'host', 'port', 'database', 'connect_args', 'connector'])
 
 # Global configuration of the environment to run tests in.
 
@@ -212,11 +223,25 @@ def create_relational_database_instance():
     This context manager should yield a handle to the relational database
     instance, in a format that other functions in this file can use.
     """
-    raise NotImplementedError("create_relational_database_instance is not implemented")
-    yield None
+    resource_group_name = '{}mysql{}'.format(PREFIX, _random_string(20))
+    administrator_login = ENV('MYSQL_ADMIN_LOGIN', 'hackaton')
+    administrator_login_password = ENV('MYSQL_ADMIN_PASSWORD', "Don't_hardCode-this!12345!")
+    server_name = '{}{}'.format(PREFIX, _random_string(20)).lower()
+    database_name = '{}db'.format(PREFIX)
+
+    with _deploy_resource_group(resource_group_name, RESOURCE_GROUP_LOCATION):
+        mysql = _deploy_mysql(
+            resource_group_name=resource_group_name,
+            location=RESOURCE_GROUP_LOCATION,
+            administrator_login=administrator_login,
+            administrator_login_password=administrator_login_password,
+            server_name=server_name,
+            database_name=database_name,
+        )
+        yield mysql
 
 
-def create_relational_database_client(database):
+def create_relational_database_client(handle):
     """
     Given a handle to the database created in `create_relational_database_instance`,
     return a sqlalchemy engine to connect to that database.
@@ -224,7 +249,28 @@ def create_relational_database_client(database):
     This function is not expected to call `engine.connect()`, the test
     suite will do that on the value returned by this function.
     """
-    raise NotImplementedError("create_relational_database_client is not implemented")
+    _wait_for_port(
+        host=handle.host,
+        port=handle.port,
+        max_wait_time=timedelta(seconds=ENV.int('MAX_WAIT_TIME_DATABASE_SECONDS', 120)),
+    )
+
+    LOG.debug('Creating sqlalchemy engine for %s:%s', handle.host, handle.port)
+    engine = create_engine(
+        '{connector}://{user}:{password}@{host}:{port}/{database}'.format(
+            connector=handle.connector,
+            user=handle.user,
+            password=handle.password,
+            host=handle.host,
+            port=handle.port,
+            database=handle.database,
+        ),
+        implicit_returning=False,
+        connect_args=handle.connect_args,
+    )
+
+    _wait_for_sqlalchemy(engine)
+
     return engine
 
 
@@ -315,3 +361,182 @@ def _deploy_storage(
         account_name=account_name,
         account_key=account_key,
     )
+
+
+def _deploy_mysql(
+        resource_group_name: str,
+        location: str,
+        administrator_login: str,
+        administrator_login_password: str,
+        server_name: str,
+        database_name: str,
+        sku_name: str = ENV('MYSQL_SKU_NAME', 'GP_Gen5_4'),
+        sku_tier: str = ENV('MYSQL_SKU_TIER', 'GeneralPurpose'),
+        sku_capacity: int = ENV.int('MYSQL_SKU_CAPACITY', 4),
+        sku_size: int = ENV.int('MYSQL_SKU_SIZE', 102400),
+        sku_family: str = ENV('MYSQL_SKU_FAMILY', 'Gen5'),
+        version: str = ENV('MYSQL_VERSION', '5.7'),
+        ssl_enforcement: str = ENV('MYSQL_SSL_ENFORCEMENT', 'Disabled'),  # Change to Enabled if necessary
+        backup_retention_days: int = ENV.int('MYSQL_BACKUP_RETENTION_DAYS', 7),
+        geo_redundant_backup: str = ENV('MYSQL_GEO_REDUNDANT_BACKUP', 'Disabled'),
+        database_charset: str = ENV('MYSQL_DATABASE_CHARSET', 'utf8'),
+        database_collation: str = ENV('MYSQL_DATABASE_COLLATION', 'utf8_general_ci'),
+        firewall_rule_name: str = ENV('MYSQL_FIREWALL_RULE_NAME', 'AllowAll'),
+        start_ip_address: str = ENV('MYSQL_FIREWALL_START_IP_ADDRESS', '0.0.0.0'),  # nosec
+        end_ip_address: str = ENV('MYSQL_FIREWALL_END_IP_ADDRESS', '255.255.255.255'),
+):
+    client = _new_client(MySQLManagementClient)
+
+    LOG.debug('Creating database server %s', server_name)
+    mysql_deployment = client.servers.create(
+        resource_group_name=resource_group_name,
+        server_name=server_name,
+        parameters=client.servers.models.ServerForCreate(
+            sku=client.servers.models.Sku(
+                name=sku_name,
+                tier=sku_tier,
+                capacity=sku_capacity,
+                size=sku_size,
+                family=sku_family,
+            ),
+            properties=client.servers.models.ServerPropertiesForDefaultCreate(
+                administrator_login=administrator_login,
+                administrator_login_password=administrator_login_password,
+                version=version,
+                ssl_enforcement=ssl_enforcement,
+                storage_profile=client.servers.models.StorageProfile(
+                    backup_retention_days=backup_retention_days,
+                    geo_redundant_backup=geo_redundant_backup,
+                    storage_mb=sku_size,
+                ),
+            ),
+            location=location,
+        ),
+    )
+
+    mysql = mysql_deployment.result()
+
+    if not mysql.fully_qualified_domain_name:
+        mysql = client.servers.get(
+            resource_group_name=resource_group_name,
+            server_name=server_name,
+        )
+
+    host = mysql.fully_qualified_domain_name
+    LOG.debug('Done creating database server %s at %s', server_name, host)
+
+    LOG.debug('Creating database and firewall rule in server %s', server_name)
+    database_deployment = client.databases.create_or_update(
+        resource_group_name=resource_group_name,
+        server_name=server_name,
+        database_name=database_name,
+        charset=database_charset,
+        collation=database_collation,
+    )
+
+    firewall_deployment = client.firewall_rules.create_or_update(
+        resource_group_name=resource_group_name,
+        server_name=server_name,
+        firewall_rule_name=firewall_rule_name,
+        start_ip_address=start_ip_address,
+        end_ip_address=end_ip_address,
+    )
+
+    database_deployment.wait()
+    firewall_deployment.wait()
+    LOG.debug('Done creating database and firewall rule in server %s', server_name)
+
+    connect_args = {}
+    if ssl_enforcement == 'Enabled':
+        connect_args['ssl'] = {'ca_cert': expanduser(ENV('MYSQL_CLIENT_CERT_LOCATION'))}
+
+    if _is_ip_address(host):
+        user = administrator_login
+    else:
+        user = '{}@{}'.format(administrator_login, server_name)
+
+    return MysqlHandle(
+        user=user,
+        password=administrator_login_password,
+        host=host,
+        port=MYSQL_PORT,
+        database=database_name,
+        connect_args=connect_args,
+        connector='mysql+pymysql',
+    )
+
+##############################################################################
+# Utility functions
+##############################################################################
+
+def _is_ip_address(ip_or_fqdn: str) -> bool:
+    try:
+        ip_address(ip_or_fqdn)
+    except ValueError:
+        return False
+    else:
+        return True
+
+
+def _wait_for_sqlalchemy(engine, polling_interval_seconds=3):
+
+    while True:
+        try:
+            with engine.connect() as connection:
+                for _ in connection.execute('select 1'):
+                    pass
+        except SQLAlchemyError as ex:
+            LOG.debug('Unable to connect to database: %s', ex)
+        else:
+            LOG.debug('Database connection is available')
+            break
+
+        LOG.debug('Waiting for database connection')
+        sleep(polling_interval_seconds)
+
+
+def _wait_for_port(
+        host: str,
+        port: int,
+        max_wait_time,
+        polling_interval_seconds: float = ENV.float('PORT_CHECK_POLLING_INTERVAL', 1),
+) -> None:
+    start_time = _utcnow()
+
+    while True:
+        if _is_port_open(host, port):
+            break
+
+        if _utcnow() - start_time > max_wait_time:
+            raise ValueError('{}:{} was not available in time'.format(host, port))
+
+        LOG.debug('Waiting for %s:%d', host, port)
+        sleep(polling_interval_seconds)
+
+def _utcnow():
+    now = datetime.utcnow()
+    now = now.replace(tzinfo=timezone.utc)
+    return now
+
+def _is_port_open(
+        host,
+        port,
+        socket_timeout_seconds = ENV.float('PORT_CHECK_TIMEOUT_SECONDS', 1),
+):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.settimeout(socket_timeout_seconds)
+        result = sock.connect_ex((host, port))
+    except socket.error as ex:
+        LOG.debug('Unable to open socket %s:%d, reason: %s', host, port, ex)
+        return False
+    finally:
+        sock.close()
+
+    port_is_open = result == 0
+    if port_is_open:
+        LOG.debug('Socket %s:%d is open', host, port)
+    else:
+        LOG.debug('Socket %s:%d is not open, reason: %s', host, port, result)
+
+    return port_is_open
