@@ -6,19 +6,14 @@ colorama
 cryptography==2.4.2
 
 azure-cli-core==2.0.63
-azure-common==1.1.19
-azure-mgmt-compute==5.0.0
-azure-mgmt-containerinstance==1.4.1
-azure-mgmt-network==2.7.0
-azure-mgmt-rdbms==1.8.0
-azure-mgmt-resource==2.1.0
-azure-mgmt-storage==3.3.0
-azure-monitor==0.3.1
-azure-storage-blob==1.2.0rc1
+azure-mgmt-compute==6.0.0
+azure-mgmt-network==5.0.0
+azure-mgmt-rdbms==1.9.0
+azure-mgmt-resource==3.1.0
+azure-mgmt-storage==4.0.0
+azure-storage-blob==2.1.0
 environs==4.1.0
-msrestazure==0.4.34
 mysqlclient==1.4.2.post1
-sshtunnel==0.1.4
 
 
 # syntax checker
