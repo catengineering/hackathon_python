@@ -19,3 +19,7 @@ environs==4.1.0
 msrestazure==0.4.34
 mysqlclient==1.4.2.post1
 sshtunnel==0.1.4
+
+
+# syntax checker
+pylint
