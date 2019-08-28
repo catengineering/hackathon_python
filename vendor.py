@@ -4,7 +4,32 @@ import contextlib
 import paramiko
 import sqlalchemy
 
+from functools import lru_cache
+from logging import FileHandler, Formatter, StreamHandler, getLogger
+from os.path import expanduser
+from pathlib import Path
+
+from azure.common.client_factory import get_client_from_auth_file, get_client_from_cli_profile
+from azure.mgmt.resource import ResourceManagementClient
+from environs import Env
+
 from tests.metrics import metrics
+
+
+##############################################################################
+# Global variables and type definitions
+##############################################################################
+
+ENV = Env()
+ENV.read_env()
+
+LOG = getLogger(__name__)
+LOG_FORMATTER = Formatter('%(asctime)s | %(name)s | %(levelname)s | %(message)s')
+
+LOG_STREAM_HANDLER = StreamHandler()
+LOG_STREAM_HANDLER.setFormatter(LOG_FORMATTER)
+LOG_STREAM_HANDLER.setLevel(ENV('LOG_LEVEL', 'FATAL'))
+LOG.addHandler(LOG_STREAM_HANDLER)
 
 
 # Global configuration of the environment to run tests in.
@@ -15,6 +40,7 @@ def setup_environment():
     Preform any initial configuring of the environment needed to preform any
     of the calls in this file.
     """
+    client = _new_client(ResourceManagementClient)
 
 
 def teardown_environment():
@@ -159,3 +185,28 @@ def create_relational_database_client(database):
     """
     raise NotImplementedError("create_relational_database_client is not implemented")
     return engine
+
+
+@lru_cache(maxsize=32)
+def _new_client(client_type):
+    client_args = {}
+
+    base_url = ENV('ARM_BASE_URL', '')
+    if base_url:
+        client_args['base_url'] = base_url
+        LOG.debug('Using custom ARM endpoint %s for %s', base_url, client_type.__name__)
+    else:
+        LOG.debug('Using default ARM endpoint for %s', client_type.__name__)
+
+    auth_path = expanduser(ENV('AZURE_AUTH_LOCATION', ''))
+    if auth_path and Path(auth_path).is_file():
+        LOG.debug('Using auth file %s for %s', auth_path, client_type.__name__)
+        client_args['auth_path'] = auth_path
+
+    try:
+        client = get_client_from_auth_file(client_type, **client_args)
+    except FileNotFoundError:
+        client = get_client_from_cli_profile(client_type, **client_args)
+        LOG.warning('Auth file not found, falling back to CLI profile for %s', client_type.__name__)
+
+    return client
