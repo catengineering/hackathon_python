@@ -8,9 +8,17 @@ from functools import lru_cache
 from logging import FileHandler, Formatter, StreamHandler, getLogger
 from os.path import expanduser
 from pathlib import Path
+from contextlib import contextmanager
+from collections import namedtuple
+from urllib.parse import urlparse
+import random
+from string import ascii_letters, digits
 
 from azure.common.client_factory import get_client_from_auth_file, get_client_from_cli_profile
 from azure.mgmt.resource import ResourceManagementClient
+from azure.mgmt.storage import StorageManagementClient
+from azure.storage.blob import BlockBlobService
+from msrestazure.azure_exceptions import ClientException
 from environs import Env
 
 from tests.metrics import metrics
@@ -31,6 +39,11 @@ LOG_STREAM_HANDLER.setFormatter(LOG_FORMATTER)
 LOG_STREAM_HANDLER.setLevel(ENV('LOG_LEVEL', 'FATAL'))
 LOG.addHandler(LOG_STREAM_HANDLER)
 
+PREFIX = ENV('RESOURCE_PREFIX', 'hackaton')
+RESOURCE_GROUP_LOCATION = ENV('RESOURCE_GROUP_LOCATION', 'eastus')
+
+ObjectStorageHandle = namedtuple('ObjectStorageHandle', ['blob_client', 'container_name'])
+StorageHandle = namedtuple('StorageHandle', ['account_name', 'account_key'])
 
 # Global configuration of the environment to run tests in.
 
@@ -40,7 +53,7 @@ def setup_environment():
     Preform any initial configuring of the environment needed to preform any
     of the calls in this file.
     """
-    client = _new_client(ResourceManagementClient)
+
 
 
 def teardown_environment():
@@ -86,52 +99,80 @@ def create_compute_ssh_client(compute):
 
 
 @metrics
-@contextlib.contextmanager
+@contextmanager
 def create_object_storage_instance():
-    """
-    Create a new object storage instance.
+    """Create a new object storage instance.
 
-    This context manager should yield a handle to the object storage instance,
-    in a format that other functions in this file can use.
+    :returns: a handle to the object storage instance in a format that other functions in this file can use.
     """
-    raise NotImplementedError("create_object_storage_instance is not implemented")
-    yield None
+    resource_group_name = '{}storage{}'.format(PREFIX, _random_string(20))
+    container_name = '{}container'.format(PREFIX)
+
+    with _deploy_resource_group(resource_group_name, RESOURCE_GROUP_LOCATION):
+
+        storage_account_name = '{}storage{}'.format(PREFIX, _random_string(20)).lower()[:24]
+
+        try:
+            storage = _deploy_storage(
+                resource_group_name=resource_group_name,
+                location=RESOURCE_GROUP_LOCATION,
+                account_name=storage_account_name,
+            )
+
+            blob_client = BlockBlobService(
+                account_name=storage.account_name,
+                account_key=storage.account_key,
+            )
+
+            blob_client.create_container(container_name, fail_on_exist=False)
+        except ClientException as ex:
+            LOG.debug('Error in storage account %s or container %s: %s', storage_account_name, container_name, ex)
+            raise
+        else:
+            LOG.debug('Storage account %s and container %s are available', storage_account_name, container_name)
+
+        yield ObjectStorageHandle(
+            blob_client=blob_client,
+            container_name=container_name,
+        )
 
 
 def object_storage_list(handle):
+    """List all objects contained inside the object store.
+
+    :param handle: handle provided by :func:`~create_object_storage_instance`.
+    :returns: a list of object names.
     """
-    Given the object yielded by the `create_object_storage_instance` context
-    manager (`handle)`, list all objects contained inside the object store.
-    """
-    raise NotImplementedError("object_storage_list is not implemented")
+    return [blob.name for blob in handle.blob_client.list_blobs(handle.container_name)]
 
 
 def object_storage_delete(handle, path):
+    """Delete an object on the storage.
+
+    :param handle: handle provided by :func:`~create_object_storage_instance`.
+    :param path: path of the object to delete.
     """
-    Given the object yielded by the `create_object_storage_instance` context
-    manager (`handle)`, delete the object at `path`.
-    """
-    raise NotImplementedError("object_storage_delete is not implemented")
+    handle.blob_client.delete_blob(handle.container_name, path)
 
 
 def object_storage_write(handle, path, data):
-    """
-    Given the object yielded by the `create_object_storage_instance` context
-    manager (`handle)`, write the data held in memory as `data` to `path` inside the
-    object storage instance.
+    """Write the data held in memory to the object storage instance.
 
-    Calls to read that path must return the data bytes as held in memory here.
+    :param handle: handle provided by :func:`~create_object_storage_instance`.
+    :param path: path of the object to write.
+    :param data: the bytes to write.
     """
-    raise NotImplementedError("object_storage_write is not implemented")
+    handle.blob_client.create_blob_from_bytes(handle.container_name, path, data)
 
 
 def object_storage_read(handle, path):
+    """Read data from the object storage instance.
+
+    :param handle: handle provided by :func:`~create_object_storage_instance`.
+    :param path: path of the object to read.
+    :returns: the bytes read from the storage.
     """
-    Given the object yielded by the `create_object_storage_instance` context
-    manager (`handle`), read the data present in the remote object storage instance
-    stored at `path`, and return that data completely read into memory.
-    """
-    raise NotImplementedError("object_storage_read is not implemented")
+    return handle.blob_client.get_blob_to_bytes(handle.container_name, path).content
 
 
 # Block storage specific helpers to create, destroy and attach resources.
@@ -187,6 +228,10 @@ def create_relational_database_client(database):
     return engine
 
 
+def _random_string(length, alphabet = ascii_letters + digits) -> str:
+    return ''.join(random.choice(alphabet) for _ in range(length))  # nosec
+
+
 @lru_cache(maxsize=32)
 def _new_client(client_type):
     client_args = {}
@@ -210,3 +255,63 @@ def _new_client(client_type):
         LOG.warning('Auth file not found, falling back to CLI profile for %s', client_type.__name__)
 
     return client
+
+
+@contextlib.contextmanager
+def _deploy_resource_group(
+        resource_group_name: str,
+        resource_group_location: str,
+):
+    client = _new_client(ResourceManagementClient)
+
+    LOG.debug('Creating resource group %s', resource_group_name)
+    client.resource_groups.create_or_update(
+        resource_group_name=resource_group_name,
+        parameters={'location': resource_group_location},
+    )
+
+    yield
+
+    LOG.debug('Cleaning up resource group %s', resource_group_name)
+    try:
+        client.resource_groups.delete(resource_group_name, polling=False)
+    except ClientException as ex:
+        LOG.warning('Error deleting resource group %s: %s', resource_group_name, ex)
+
+
+
+def _deploy_storage(
+        resource_group_name: str,
+        location: str,
+        account_name: str,
+        sku: str = ENV('STORAGE_SKU', 'Standard_LRS'),
+):
+    client = _new_client(StorageManagementClient)
+
+    LOG.debug('Creating storage account %s', account_name)
+    storage_deployment = client.storage_accounts.create(
+        resource_group_name=resource_group_name,
+        account_name=account_name,
+        parameters=client.storage_accounts.models.StorageAccountCreateParameters(
+            sku=client.storage_accounts.models.Sku(
+                name=sku,
+            ),
+            kind=client.storage_accounts.models.Kind.storage,
+            location=location,
+        ),
+    )
+    storage = storage_deployment.result()
+
+    LOG.debug('Done creating storage account %s', account_name)
+
+    LOG.debug('Fetching access keys for storage account %s', account_name)
+    account_key = client.storage_accounts.list_keys(
+        resource_group_name=resource_group_name,
+        account_name=account_name,
+    ).keys[0].value
+    LOG.debug('Done fetching access keys for storage account %s', account_name)
+
+    return StorageHandle(
+        account_name=account_name,
+        account_key=account_key,
+    )
