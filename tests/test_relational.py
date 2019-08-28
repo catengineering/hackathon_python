@@ -41,9 +41,10 @@ def make_name():
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True)
-    name = Column(String)
-    fullname = Column(String)
+    name = Column(String(128))
+    fullname = Column(String(128))
 
+NUM_OF_INSERT = 10
 
 @test
 def test_relational_instance():
@@ -53,26 +54,26 @@ def test_relational_instance():
         Session = sessionmaker(bind=engine)
 
         session = Session()
-        for _ in range(0, 10000):
+        for _ in range(0, NUM_OF_INSERT):
             name, fullname = make_name()
             user = User(name=name, fullname=fullname)
             session.add(user)
 
-        assert len(session.query(User).all()) == 10000, \
-                "users in the database should be 10000"
+        assert len(session.query(User).all()) == NUM_OF_INSERT, \
+                "users in the database should be %d" % NUM_OF_INSERT
 
         session.rollback()
         assert len(session.query(User).all()) == 0, \
                 "users in the database should be 0"
 
         session = Session()
-        for _ in range(0, 10000):
+        for _ in range(0, NUM_OF_INSERT):
             name, fullname = make_name()
             user = User(name=name, fullname=fullname)
             session.add(user)
         session.commit()
 
-        assert len(session.query(User).all()) == 10000, \
-                "users in the database should be 10000"
+        assert len(session.query(User).all()) == NUM_OF_INSERT, \
+                "users in the database should be %d" % NUM_OF_INSERT
 
         session.close()
