@@ -14,36 +14,16 @@ The following scenario requirements should be implemented in the `vendor.py` fil
 6.  Delete the dev/test environment.
 
 
-## Getting Started 
-### Using the development environment
-### Authenticate
-The scenario will use an [Azure Service Principal](https://docs.microsoft.com/en-us/azure/active-directory/develop/app-objects-and-service-principals) to interact with Azure. A service principal has been created for you to use. 
+## Environment Setup
 
-The [Azure CLI](https://docs.microsoft.com/en-us/cli/azure/install-azure-cli?view=azure-cli-latest) is needed to download the credentials. The CLI is already installed in the pre-provisioned 
+The recommended development environment relies on [VS Code Remote](https://code.visualstudio.com/docs/remote/remote-overview) to provide a local editing experience over a development machine in Azure. Each team has been assigned a development VM that includes all of the tools, code, and configuration needed to complete the scenario.
 
-1. Authenticate with the Azure subscription using your provided username and password:
-   
-   `
-   az login
-   `
-2. Download the service principal credentials
+### Local Setup
+*Noel to update*
 
-    `
-    az keyvault secret download --vault-name Scenario81Vault -n gov-sp-credentials --file ~/sdk_credentials.json
-    `
+Complete the following steps on your local machine:
+1. Install [VS Code](https://code.visualstudio.com/download)
+2. Install the [Remote Extension for VS Code](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.vscode-remote-extensionpack)
+3. Connect to the remote machine.
 
-    `
-    export AZURE_AUTH_LOCATION=~/sdk_credentials.json
-    `
-### Initializing the environment
-Basic steps:
-1. Initialize the virtual environment
-   
-   `
-   source .venv/bin/activate
-    `
-2. Run the test harness:
-   
-   `
-   python3 main.py
-   `
+
