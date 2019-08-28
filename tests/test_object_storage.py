@@ -8,6 +8,8 @@ from vendor import (
     create_object_storage_instance,
     object_storage_write,
     object_storage_read,
+    object_storage_list,
+    object_storage_delete,
 )
 
 @test
@@ -29,6 +31,10 @@ def test_storage_instance_simple():
 
 @test
 def test_storage_instance_crud():
+    data = ("Cats and dogs each hate the other. The pipe began to rust "
+            "while new. Open the crate but don't break the glass. Add "
+            "the sum to the product of these three.").encode()
+
     with create_object_storage_instance() as handle:
 
         paths = object_storage_list(handle)
