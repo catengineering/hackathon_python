@@ -364,26 +364,12 @@ def _deploy_storage(
 
 
 def _deploy_mysql(
-        resource_group_name: str,
-        location: str,
-        administrator_login: str,
-        administrator_login_password: str,
-        server_name: str,
-        database_name: str,
-        sku_name: str = ENV('MYSQL_SKU_NAME', 'GP_Gen5_4'),
-        sku_tier: str = ENV('MYSQL_SKU_TIER', 'GeneralPurpose'),
-        sku_capacity: int = ENV.int('MYSQL_SKU_CAPACITY', 4),
-        sku_size: int = ENV.int('MYSQL_SKU_SIZE', 102400),
-        sku_family: str = ENV('MYSQL_SKU_FAMILY', 'Gen5'),
-        version: str = ENV('MYSQL_VERSION', '5.7'),
-        ssl_enforcement: str = ENV('MYSQL_SSL_ENFORCEMENT', 'Disabled'),  # Change to Enabled if necessary
-        backup_retention_days: int = ENV.int('MYSQL_BACKUP_RETENTION_DAYS', 7),
-        geo_redundant_backup: str = ENV('MYSQL_GEO_REDUNDANT_BACKUP', 'Disabled'),
-        database_charset: str = ENV('MYSQL_DATABASE_CHARSET', 'utf8'),
-        database_collation: str = ENV('MYSQL_DATABASE_COLLATION', 'utf8_general_ci'),
-        firewall_rule_name: str = ENV('MYSQL_FIREWALL_RULE_NAME', 'AllowAll'),
-        start_ip_address: str = ENV('MYSQL_FIREWALL_START_IP_ADDRESS', '0.0.0.0'),  # nosec
-        end_ip_address: str = ENV('MYSQL_FIREWALL_END_IP_ADDRESS', '255.255.255.255'),
+        resource_group_name,
+        location,
+        administrator_login,
+        administrator_login_password,
+        server_name,
+        database_name,
 ):
     client = _new_client(MySQLManagementClient)
 
@@ -393,27 +379,26 @@ def _deploy_mysql(
         server_name=server_name,
         parameters=client.servers.models.ServerForCreate(
             sku=client.servers.models.Sku(
-                name=sku_name,
-                tier=sku_tier,
-                capacity=sku_capacity,
-                size=sku_size,
-                family=sku_family,
+                name=ENV('MYSQL_SKU_NAME', 'GP_Gen5_4'),
+                tier=ENV('MYSQL_SKU_TIER', 'GeneralPurpose'),
+                capacity=ENV.int('MYSQL_SKU_CAPACITY', 4),
+                size=ENV.int('MYSQL_SKU_SIZE', 102400),
+                family=ENV('MYSQL_SKU_FAMILY', 'Gen5'),
             ),
             properties=client.servers.models.ServerPropertiesForDefaultCreate(
                 administrator_login=administrator_login,
                 administrator_login_password=administrator_login_password,
-                version=version,
-                ssl_enforcement=ssl_enforcement,
+                version=ENV('MYSQL_VERSION', '5.7'),
+                #ssl_enforcement=ssl_enforcement,
                 storage_profile=client.servers.models.StorageProfile(
-                    backup_retention_days=backup_retention_days,
-                    geo_redundant_backup=geo_redundant_backup,
-                    storage_mb=sku_size,
+                    backup_retention_days=ENV.int('MYSQL_BACKUP_RETENTION_DAYS', 7),
+                    geo_redundant_backup=ENV('MYSQL_GEO_REDUNDANT_BACKUP', 'Disabled'),
+                    storage_mb=ENV.int('MYSQL_SKU_SIZE', 102400),
                 ),
             ),
             location=location,
         ),
     )
-
     mysql = mysql_deployment.result()
 
     if not mysql.fully_qualified_domain_name:
@@ -421,7 +406,6 @@ def _deploy_mysql(
             resource_group_name=resource_group_name,
             server_name=server_name,
         )
-
     host = mysql.fully_qualified_domain_name
     LOG.debug('Done creating database server %s at %s', server_name, host)
 
@@ -430,25 +414,21 @@ def _deploy_mysql(
         resource_group_name=resource_group_name,
         server_name=server_name,
         database_name=database_name,
-        charset=database_charset,
-        collation=database_collation,
+        charset=ENV('MYSQL_DATABASE_CHARSET', 'utf8'),
+        collation=ENV('MYSQL_DATABASE_COLLATION', 'utf8_general_ci'),
     )
 
     firewall_deployment = client.firewall_rules.create_or_update(
         resource_group_name=resource_group_name,
         server_name=server_name,
-        firewall_rule_name=firewall_rule_name,
-        start_ip_address=start_ip_address,
-        end_ip_address=end_ip_address,
+        firewall_rule_name=ENV('MYSQL_FIREWALL_RULE_NAME', 'AllowAll'),
+        start_ip_address=ENV('MYSQL_FIREWALL_START_IP_ADDRESS', '0.0.0.0'),
+        end_ip_address=ENV('MYSQL_FIREWALL_END_IP_ADDRESS', '255.255.255.255'),
     )
 
     database_deployment.wait()
     firewall_deployment.wait()
     LOG.debug('Done creating database and firewall rule in server %s', server_name)
-
-    connect_args = {}
-    if ssl_enforcement == 'Enabled':
-        connect_args['ssl'] = {'ca_cert': expanduser(ENV('MYSQL_CLIENT_CERT_LOCATION'))}
 
     if _is_ip_address(host):
         user = administrator_login
@@ -461,7 +441,7 @@ def _deploy_mysql(
         host=host,
         port=MYSQL_PORT,
         database=database_name,
-        connect_args=connect_args,
+        connect_args={},
         connector='mysql+pymysql',
     )
 
