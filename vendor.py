@@ -47,8 +47,9 @@ LOG_FORMATTER = Formatter('%(asctime)s | %(name)s | %(levelname)s | %(message)s'
 
 LOG_STREAM_HANDLER = StreamHandler()
 LOG_STREAM_HANDLER.setFormatter(LOG_FORMATTER)
-LOG_STREAM_HANDLER.setLevel(ENV('LOG_LEVEL', 'FATAL'))
+LOG_STREAM_HANDLER.setLevel(ENV('LOG_LEVEL', 'DEBUG'))
 LOG.addHandler(LOG_STREAM_HANDLER)
+LOG.setLevel('DEBUG')
 
 PREFIX = ENV('RESOURCE_PREFIX', 'hackaton')
 RESOURCE_GROUP_LOCATION = ENV('RESOURCE_GROUP_LOCATION', 'eastus')
