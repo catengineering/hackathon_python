@@ -21,6 +21,8 @@ from datetime import timedelta, datetime, timezone
 from azure.common.client_factory import get_client_from_auth_file, get_client_from_cli_profile
 from azure.mgmt.resource import ResourceManagementClient
 from azure.mgmt.storage import StorageManagementClient
+from azure.mgmt.network import NetworkManagementClient
+from azure.mgmt.compute import ComputeManagementClient
 from azure.mgmt.rdbms.mysql import MySQLManagementClient
 from azure.storage.blob import BlockBlobService
 from msrestazure.azure_exceptions import ClientException
@@ -40,21 +42,31 @@ from tests.metrics import metrics
 ENV = Env()
 ENV.read_env()
 
+CWD = Path(__file__).resolve().parent
+
 LOG = getLogger(__name__)
 LOG_FORMATTER = Formatter('%(asctime)s | %(name)s | %(levelname)s | %(message)s')
 
 LOG_STREAM_HANDLER = StreamHandler()
 LOG_STREAM_HANDLER.setFormatter(LOG_FORMATTER)
-LOG_STREAM_HANDLER.setLevel(ENV('LOG_LEVEL', 'FATAL'))
+LOG_STREAM_HANDLER.setLevel(ENV('LOG_LEVEL', 'DEBUG'))
 LOG.addHandler(LOG_STREAM_HANDLER)
+LOG.setLevel('DEBUG')
 
 PREFIX = ENV('RESOURCE_PREFIX', 'hackaton')
 RESOURCE_GROUP_LOCATION = ENV('RESOURCE_GROUP_LOCATION', 'eastus')
 MYSQL_PORT = 3306
+ADMIN_USERNAME = 'localadmin'
+MOUNT_NAME = '/datadisk'
+SSH_PUBLIC_KEY = expanduser(ENV('SSH_PUBLIC_KEY', CWD / 'my_key.pub'))
+SSH_PRIVATE_KEY = expanduser(ENV('SSH_PRIVATE_KEY', CWD / 'my_key'))
+
 
 ObjectStorageHandle = namedtuple('ObjectStorageHandle', ['blob_client', 'container_name'])
 StorageHandle = namedtuple('StorageHandle', ['account_name', 'account_key'])
 MysqlHandle = namedtuple('MysqlHandle', ['user', 'password', 'host', 'port', 'database', 'connect_args', 'connector'])
+ComputeHandle = namedtuple('ComputeHandle', ['resource_group', 'name', 'host', 'port', 'username'])
+BlockStorageHandle = namedtuple('BlockStorageHandle', ['id', 'resource_group', 'name'])
 
 # Global configuration of the environment to run tests in.
 
@@ -90,7 +102,155 @@ def create_compute_instance():
     that other functions in this file can use (such as
     `create_object_storage_instance`).
     """
-    raise NotImplementedError("create_compute_instance is not implemented")
+    COMPUTE_RESOURCE_GROUP_NAME='{}comp{}'.format(PREFIX, _random_string(20))
+
+    def _deploy_shared_network(resource_group_name, location, vnet_name='virtualNetwork'):
+        client = _new_client(NetworkManagementClient)
+        vnet = client.virtual_networks.create_or_update(
+            resource_group_name,
+            vnet_name,
+            parameters = {
+                'location': location,
+                'addressSpace': {
+                    'addressPrefixes': [ "10.1.0.0/24"]
+                },
+                'subnets': [
+                    {
+                        'name': 'default',
+                        'properties': {
+                            "addressPrefix": "10.1.0.0/24"
+                        }
+                    }
+                ] 
+            }
+        )
+        vnet.wait()
+        return next(client.subnets.list(resource_group_name, vnet_name)).id
+
+    def _deploy_vm_network(resource_group_name, vm_name, *, subnet_id, location):
+        client = _new_client(NetworkManagementClient)
+        network_security_group = client.network_security_groups.create_or_update(
+            resource_group_name,
+            f'{vm_name}NSG',
+            parameters={
+                'location': location,
+                'securityRules':[
+                    {
+                        "name": "SSH",
+                        "properties": {
+                            "priority": 300,
+                            "protocol": "TCP",
+                            "access": "Allow",
+                            "direction": "Inbound",
+                            "sourceAddressPrefix": "*",
+                            "sourcePortRange": "*",
+                            "destinationAddressPrefix": "*",
+                            "destinationPortRange": "22"
+                        }
+                    }
+                ]
+            }
+        )
+        
+        public_ip = client.public_ip_addresses.create_or_update(
+            resource_group_name,
+            f'{vm_name}PublicIp',
+            parameters={
+                'location': location,
+                "publicIpAllocationMethod": "Dynamic",
+                "dnsSettings": {
+                    "domainNameLabel": 'hack-' + _random_string(8).lower()
+                }
+            }
+        ).result()
+
+        public_ip_address_id = public_ip.id
+        public_ip_address = public_ip.dns_settings.fqdn
+        network_security_group_id = network_security_group.result().id
+
+        nic = client.network_interfaces.create_or_update(
+            resource_group_name,
+            f'{vm_name}Nic',
+            parameters= {
+                "location": location,
+                "ipConfigurations": [
+                        {
+                            "name": "ipconfig1",
+                            "properties": {
+                                "subnet": {
+                                    "id": subnet_id
+                                },
+                                "privateIPAllocationMethod": "Dynamic",
+                                "publicIpAddress": {
+                                    "id": public_ip_address_id
+                                }
+                            }
+                        }
+                    ],
+                    "networkSecurityGroup": {
+                        "id": network_security_group_id
+                    }
+                }
+        )
+
+        return nic.result().id, public_ip_address
+
+    def _deploy_vm(resource_group_name, vm_name, *, admin_user_name, public_key, nic_id, location):
+        client = _new_client(ComputeManagementClient)
+
+        virtual_machine = client.virtual_machines.create_or_update(
+            resource_group_name = resource_group_name,
+            vm_name=vm_name,
+            parameters= {
+                'location': location,
+                'os_profile': {
+                    'computer_name': vm_name,
+                    'admin_username': admin_user_name,
+                    'linuxConfiguration': {
+                        'disablePasswordAuthentication': True,
+                        'ssh': {
+                            'publicKeys': [
+                                {
+                                    'path': f'/home/{admin_user_name}/.ssh/authorized_keys',
+                                    'keyData': public_key
+                                }
+                            ]
+                        }
+                    }
+                },
+                'hardware_profile': {
+                    'vm_size': 'Standard_DS1_v2'
+                },
+                'storage_profile': {
+                    'image_reference': {
+                        'publisher': 'Canonical',
+                        'offer': 'UbuntuServer',
+                        'sku': '16.04.0-LTS',
+                        'version': 'latest'
+                    },
+                    "dataDisks": [
+                    ]
+                },
+                'network_profile': {
+                    'network_interfaces': [{
+                        'id': nic_id,
+                    }]
+                },
+            }
+        )
+        return virtual_machine.result()
+
+    vm_name = 'vm{}'.format(_random_string(20))
+
+    with open(SSH_PUBLIC_KEY, 'r') as f:
+        ssh_public_key = f.read()
+
+    with _deploy_resource_group(COMPUTE_RESOURCE_GROUP_NAME, RESOURCE_GROUP_LOCATION):
+        subnet_id = _deploy_shared_network(COMPUTE_RESOURCE_GROUP_NAME, RESOURCE_GROUP_LOCATION)
+        nic_id, public_ip = _deploy_vm_network(COMPUTE_RESOURCE_GROUP_NAME, vm_name, subnet_id=subnet_id, location=RESOURCE_GROUP_LOCATION)
+        vm = _deploy_vm(COMPUTE_RESOURCE_GROUP_NAME, vm_name, admin_user_name=ADMIN_USERNAME, location=RESOURCE_GROUP_LOCATION, nic_id=nic_id, public_key=ssh_public_key)
+
+        yield ComputeHandle(resource_group=COMPUTE_RESOURCE_GROUP_NAME, name=vm_name, host=public_ip, port=22, username=ADMIN_USERNAME)
 
 
 def create_compute_ssh_client(compute):
@@ -100,9 +260,13 @@ def create_compute_ssh_client(compute):
 
     be sure to `.connect()` to the machine before returning the SSHClient handle.
     """
-    raise NotImplementedError("create_compute_ssh_client is not implemented")
-
     client = paramiko.SSHClient()
+    LOG.debug('Loading system host keys...')
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    client.load_system_host_keys()
+    client.connect(compute.host, compute.port, compute.username, key_filename=SSH_PRIVATE_KEY)
+    LOG.debug('Connected!')
+
     return client
 
 
@@ -199,16 +363,69 @@ def create_block_storage_instance():
     This context manager should yield a handle to the block storage instance,
     in a format that other functions in this file can use.
     """
-    raise NotImplementedError("create_block_storage_instance is not implemented")
-    yield None
+    client = _new_client(ComputeManagementClient)
+    resource_group_name = '{}compute{}'.format(PREFIX, _random_string(20))
+    disk_name = 'disk'
+    
+    with _deploy_resource_group(resource_group_name, RESOURCE_GROUP_LOCATION):
+        disk = client.disks.create_or_update(
+            resource_group_name,
+            disk_name,
+            disk={
+                "location": RESOURCE_GROUP_LOCATION,
+                "sku":{
+                    "name": "Standard_LRS"
+                },
+                "creationData": {
+                    "createOption": "Empty"
+                },
+                "diskSizeGB": 1
+            }
+        )
+        disk_definition = disk.result()
+        yield BlockStorageHandle(disk_definition.id, resource_group_name, name=disk_definition.name)
 
 
 def attach_block_storage_to_compute(compute_handle, storage_handle):
-    raise NotImplementedError("attach_block_storage_to_compute is not implemented")
+    client = _new_client(ComputeManagementClient)
+    vm_definition = client.virtual_machines.get(compute_handle.resource_group, compute_handle.name)
+    vm_definition.storage_profile.data_disks.append({
+        'lun': 13,
+        'name': storage_handle.name,
+        'create_option': "Attach",
+        'managed_disk': {
+            'id': storage_handle.id
+        }
+    })
+    client.virtual_machines.create_or_update(compute_handle.resource_group, compute_handle.name, vm_definition).wait()
+
+    script_path = CWD / 'resources' / 'mount_data_disk.sh'
+
+    with create_compute_ssh_client(compute_handle) as ssh:
+        sftp = ssh.open_sftp()
+
+        with sftp.file('/tmp/mount_data_disk.sh', 'wb') as remote:
+            with open(script_path, 'rb') as script:
+                remote.write(script.read())
+
+        stdin, stdout, stderr = ssh.exec_command('/bin/bash /tmp/mount_data_disk.sh')
+        
+        LOG.debug('%s %s', stdout.read(), stderr.read())
+    return '/datadisk/demo'
 
 
 def remove_block_storage_from_compute(compute_handle, storage_handle):
-    raise NotImplementedError("remove_block_storage_from_compute is not implemented")
+    # Try really hard to flush the files...    
+    with create_compute_ssh_client(compute_handle) as ssh:
+        stdin, stdout, stderr = ssh.exec_command('sudo sync')
+        LOG.debug('%s %s', stdout.read(), stderr.read())
+        stdin, stdout, stderr = ssh.exec_command('sudo sync')
+        LOG.debug('%s %s', stdout.read(), stderr.read())
+        
+    client = _new_client(ComputeManagementClient)
+    vm_definition = client.virtual_machines.get(compute_handle.resource_group, compute_handle.name)
+    vm_definition.storage_profile.data_disks = [d for d in vm_definition.storage_profile.data_disks if not d.name == storage_handle.name]    
+    client.virtual_machines.create_or_update(compute_handle.resource_group, compute_handle.name, vm_definition).wait()
 
 
 # Relational database specific helpers to create, destroy and access resources.
@@ -374,27 +591,19 @@ def _deploy_mysql(
     client = _new_client(MySQLManagementClient)
 
     LOG.debug('Creating database server %s', server_name)
+
+    # Here creates a server, and database you can connect to
+    # Populate the "host" variable correctly from what you get from azure
+
+    host = "update this value"
+
     mysql_deployment = client.servers.create(
         resource_group_name=resource_group_name,
         server_name=server_name,
         parameters=client.servers.models.ServerForCreate(
-            sku=client.servers.models.Sku(
-                name=ENV('MYSQL_SKU_NAME', 'GP_Gen5_4'),
-                tier=ENV('MYSQL_SKU_TIER', 'GeneralPurpose'),
-                capacity=ENV.int('MYSQL_SKU_CAPACITY', 4),
-                size=ENV.int('MYSQL_SKU_SIZE', 102400),
-                family=ENV('MYSQL_SKU_FAMILY', 'Gen5'),
-            ),
             properties=client.servers.models.ServerPropertiesForDefaultCreate(
                 administrator_login=administrator_login,
                 administrator_login_password=administrator_login_password,
-                version=ENV('MYSQL_VERSION', '5.7'),
-                #ssl_enforcement=ssl_enforcement,
-                storage_profile=client.servers.models.StorageProfile(
-                    backup_retention_days=ENV.int('MYSQL_BACKUP_RETENTION_DAYS', 7),
-                    geo_redundant_backup=ENV('MYSQL_GEO_REDUNDANT_BACKUP', 'Disabled'),
-                    storage_mb=ENV.int('MYSQL_SKU_SIZE', 102400),
-                ),
             ),
             location=location,
         ),
@@ -428,6 +637,9 @@ def _deploy_mysql(
 
     database_deployment.wait()
     firewall_deployment.wait()
+
+    # Don't touch after this point
+
     LOG.debug('Done creating database and firewall rule in server %s', server_name)
 
     if _is_ip_address(host):
@@ -441,7 +653,11 @@ def _deploy_mysql(
         host=host,
         port=MYSQL_PORT,
         database=database_name,
-        connect_args={},
+        connect_args={
+            'ssl': {
+                'ca_cert': CWD / "BaltimoreCyberTrustRoot.crt.pem"
+            }
+        },
         connector='mysql+pymysql',
     )
 
