@@ -40,6 +40,8 @@ from tests.metrics import metrics
 ENV = Env()
 ENV.read_env()
 
+CWD = Path(__file__).resolve().parent
+
 LOG = getLogger(__name__)
 LOG_FORMATTER = Formatter('%(asctime)s | %(name)s | %(levelname)s | %(message)s')
 
@@ -441,7 +443,11 @@ def _deploy_mysql(
         host=host,
         port=MYSQL_PORT,
         database=database_name,
-        connect_args={},
+        connect_args={
+            'ssl': {
+                'ca_cert': CWD / "BaltimoreCyberTrustRoot.crt.pem"
+            }
+        },
         connector='mysql+pymysql',
     )
 
