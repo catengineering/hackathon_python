@@ -11,7 +11,7 @@ if [ $? -eq 0 ]; then
   sudo chown -v -R localadmin /datadisk/
   exit 0
 fi
-echo 'size=50M,type=83' | sudo sfdisk /dev/sdc
+#echo 'size=50M,type=83' | sudo sfdisk /dev/sdc
 sudo mkfs -t ext4 /dev/sdc1
 sudo mount /dev/sdc1 /datadisk
 sudo chown -v -R localadmin /datadisk/
