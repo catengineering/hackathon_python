@@ -377,27 +377,19 @@ def _deploy_mysql(
     client = _new_client(MySQLManagementClient)
 
     LOG.debug('Creating database server %s', server_name)
+
+    # Here creates a server, and database you can connect to
+    # Populate the "host" variable correctly from what you get from azure
+
+    host = "update this value"
+
     mysql_deployment = client.servers.create(
         resource_group_name=resource_group_name,
         server_name=server_name,
         parameters=client.servers.models.ServerForCreate(
-            sku=client.servers.models.Sku(
-                name=ENV('MYSQL_SKU_NAME', 'GP_Gen5_4'),
-                tier=ENV('MYSQL_SKU_TIER', 'GeneralPurpose'),
-                capacity=ENV.int('MYSQL_SKU_CAPACITY', 4),
-                size=ENV.int('MYSQL_SKU_SIZE', 102400),
-                family=ENV('MYSQL_SKU_FAMILY', 'Gen5'),
-            ),
             properties=client.servers.models.ServerPropertiesForDefaultCreate(
                 administrator_login=administrator_login,
                 administrator_login_password=administrator_login_password,
-                version=ENV('MYSQL_VERSION', '5.7'),
-                #ssl_enforcement=ssl_enforcement,
-                storage_profile=client.servers.models.StorageProfile(
-                    backup_retention_days=ENV.int('MYSQL_BACKUP_RETENTION_DAYS', 7),
-                    geo_redundant_backup=ENV('MYSQL_GEO_REDUNDANT_BACKUP', 'Disabled'),
-                    storage_mb=ENV.int('MYSQL_SKU_SIZE', 102400),
-                ),
             ),
             location=location,
         ),
@@ -431,6 +423,9 @@ def _deploy_mysql(
 
     database_deployment.wait()
     firewall_deployment.wait()
+
+    # Don't touch after this point
+
     LOG.debug('Done creating database and firewall rule in server %s', server_name)
 
     if _is_ip_address(host):
