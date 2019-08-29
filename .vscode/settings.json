@@ -1,0 +1,10 @@
+{
+    "files.watcherExclude": {
+        "**/.git/objects/**": true,
+        "**/.git/subtree-cache/**": true,
+        "**/.venv/**": true
+    },
+    "python.pythonPath": "${workspaceFolder}/.venv/bin/python3",
+    "python.linting.enabled": true,
+    "python.linting.pylintEnabled": true,
+}
