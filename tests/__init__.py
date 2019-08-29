@@ -3,10 +3,10 @@
 from .common import test
 
 from . import (
-    test_compute,
-    test_block_storage,
+    #test_compute,
+    #test_block_storage,
     test_object_storage,
-    test_relational,
+    #test_relational,
 )
 
 from .metrics import metrics

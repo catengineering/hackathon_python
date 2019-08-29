@@ -119,6 +119,10 @@ def create_object_storage_instance():
 
     :returns: a handle to the object storage instance in a format that other functions in this file can use.
     """
+
+    # TODO
+
+    
     resource_group_name = '{}storage{}'.format(PREFIX, _random_string(20))
     container_name = '{}container'.format(PREFIX)
 
