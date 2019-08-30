@@ -35,7 +35,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from tests.metrics import metrics
 
 from hackaton_storage import create_storage_account
-from hackaton_compute import create_disk, attach_disk, detach_disk, deploy_shared_network, deploy_vm_networking, deploy_vm
+from hackaton_compute import create_disk, attach_disk, detach_disk, deploy_shared_network, deploy_vm_networking, deploy_vm, execute_script
 from hackaton_mysql import create_mysql_database
 
 ##############################################################################
@@ -244,18 +244,34 @@ def attach_block_storage_to_compute(compute_handle, storage_handle):
     )
     LOG.debug("Disk attached")
 
+    LOG.debug("Execute disk preparation script")
     script_path = CWD / 'resources' / 'mount_data_disk.sh'
 
-    with create_compute_ssh_client(compute_handle) as ssh:
-        sftp = ssh.open_sftp()
+    # with create_compute_ssh_client(compute_handle) as ssh:
+    #     sftp = ssh.open_sftp()
 
-        with sftp.file('/tmp/mount_data_disk.sh', 'wb') as remote:
-            with open(script_path, 'rb') as script:
-                remote.write(script.read())
+    #     with sftp.file('/tmp/mount_data_disk.sh', 'wb') as remote:
+    #         with open(script_path, 'rb') as script:
+    #             remote.write(script.read())
 
-        stdin, stdout, stderr = ssh.exec_command('/bin/bash /tmp/mount_data_disk.sh')
+    #     stdin, stdout, stderr = ssh.exec_command('/bin/bash /tmp/mount_data_disk.sh')
         
-        LOG.debug('%s %s', stdout.read(), stderr.read())
+    #     LOG.debug('%s %s', stdout.read(), stderr.read())
+
+    with open(script_path, 'r') as script:
+        data = script.read()
+
+    output = execute_script(
+        compute_handle.resource_group,
+        compute_handle.name,
+        data.splitlines(),
+        client
+    )
+
+    if output:
+        LOG.debug(output)  # stdout/stderr    
+    LOG.debug("Disk preparation script executed")
+
     return '/datadisk/demo'
 
 

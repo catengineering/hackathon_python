@@ -17,4 +17,5 @@ sudo mount /dev/sdc1 /datadisk
 sudo chown -v -R localadmin /datadisk/
 touch /datadisk/demo
 fallocate -l 2k /datadisk/demo
+sudo chown -v -R localadmin /datadisk/demo
 exit 0

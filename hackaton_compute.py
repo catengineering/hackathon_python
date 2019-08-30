@@ -1,3 +1,5 @@
+from typing import List
+
 from azure.mgmt.compute import ComputeManagementClient
 from azure.mgmt.compute.models import *
 from azure.mgmt.network import NetworkManagementClient
@@ -287,3 +289,38 @@ def detach_disk(
         vm_definition
     ).wait()
     # Solution end
+
+
+def execute_script(
+    resource_group_name: str,
+    virtual_machine_name: str,
+    script: List[str],
+    compute_management_client: ComputeManagementClient
+) -> str:
+    """
+    Execute the given script on the machine.
+
+    OPTIONALLY: return the stdout/stderr of the script. If you don't want to, return None.
+
+    - Resource group and VM exist already
+    - Compute mgmt client is authenticated and ready to use
+    - The "script" is the array of lines. Most of the solution will directly takes this format
+      and do not require any encoding or changes.
+    """
+    stdout_msg = None
+
+    # Solution begin
+    run_command_parameters = {
+        'command_id': 'RunShellScript', # For linux, don't change it
+        'script': script
+    }
+    poller = compute_management_client.virtual_machines.run_command(
+        resource_group_name,
+        virtual_machine_name,
+        run_command_parameters
+    )
+    result = poller.result()  # Blocking till executed
+    stdout_msg = result.value[0].message
+    # Solution end
+
+    return stdout_msg
