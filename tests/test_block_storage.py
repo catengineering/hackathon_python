@@ -29,6 +29,8 @@ def test_block_storage():
         fo = sftp.file(path, 'wb')
         fo.seek(1337)
         fo.write(phrase)
+        fo.flush()
+        fo.close()
         remove_block_storage_from_compute(compute1, block)
 
         ssh = create_compute_ssh_client(compute2)

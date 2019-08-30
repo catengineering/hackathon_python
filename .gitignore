@@ -84,7 +84,7 @@ celerybeat-schedule
 # Environments
 .env
 .venv
-env/
+env*/
 venv/
 ENV/
 env.bak/
@@ -102,3 +102,7 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+
+# SSH keys
+my_key
+my_key.pub
