@@ -1,30 +1,33 @@
 # encoding: utf-8
 
-import os
-import boto3
-import datetime
-import contextlib
-import paramiko
-from os.path import expanduser
 from pathlib import Path
 from collections import namedtuple
-from environs import Env
-CWD = Path(__file__).resolve().parent
+
+import os
+import contextlib
+import logging
+import paramiko
+import boto3
 from tests.metrics import metrics
 
+CWD = Path(__file__).resolve().parent
+
+LOG = logging.getLogger("vendor")
+LOG.setLevel(os.getenv("LOG_LEVEL", "WARNING"))
+LOG.addHandler(logging.StreamHandler())
 
 ##############################################################################
 # Global variables and type definitions
 ##############################################################################
 
-ComputeHandle = namedtuple('ComputeHandle', ['host', 'port', 'username', 'instanceid'])
+ComputeHandle = namedtuple("ComputeHandle", ["host", "port", "username", "instanceid"])
 
 AWS_ACCESS_KEY_ID = ""
 AWS_SECRET_ACCESS_KEY = ""
 AWS_REGION = "us-west-2"
 AWS_AVAILABILITY_ZONE = "us-west-2a"
-VPC_NAME = "sample_VPC"
-ADMIN_USERNAME= "ec2-user"
+VPC_NAME = "sample_vpc"
+ADMIN_USERNAME = "ec2-user"
 
 
 ec2 = boto3.resource(
@@ -40,12 +43,6 @@ ec2_client = boto3.client(
     aws_access_key_id=AWS_ACCESS_KEY_ID,
     aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
 )
-ssm_client = boto3.client(
-    "ssm",
-    region_name=AWS_REGION,
-    aws_access_key_id=AWS_ACCESS_KEY_ID,
-    aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-)
 
 
 def setup_environment():
@@ -53,7 +50,6 @@ def setup_environment():
     Preform any initial configuring of the environment needed to preform any
     of the calls in this file.
     """
-
 
 
 def teardown_environment():
@@ -82,7 +78,9 @@ def create_compute_instance():
 
     def _deploy_vpc(vpc_name, availability_zone):
         vpc = ec2.create_vpc(CidrBlock="10.0.0.0/16")
-        ec2_client.modify_vpc_attribute( VpcId = vpc.id , EnableDnsHostnames = { 'Value': True } )
+        ec2_client.modify_vpc_attribute(
+            VpcId=vpc.id, EnableDnsHostnames={"Value": True}
+        )
 
         # Assign name to the vpc
         vpc.create_tags(Tags=[{"Key": "Name", "Value": vpc_name}])
@@ -94,13 +92,14 @@ def create_compute_instance():
 
         # Create Route Table (public route)
         route_table = vpc.create_route_table()
-        route_ig_ipv4 = route_table.create_route(
-            DestinationCidrBlock="0.0.0.0/0", GatewayId=internet_gateway.internet_gateway_id
+        route_table.create_route(
+            DestinationCidrBlock="0.0.0.0/0",
+            GatewayId=internet_gateway.internet_gateway_id,
         )
 
         # Create a subnet in our VPC
         subnet = vpc.create_subnet(
-        CidrBlock="10.0.0.0/24", AvailabilityZone=availability_zone
+            CidrBlock="10.0.0.0/24", AvailabilityZone=availability_zone
         )
 
         # Associate the route table with subnet
@@ -108,15 +107,15 @@ def create_compute_instance():
 
         # Create Security group
         security_group = vpc.create_security_group(
-            GroupName="sample-name", Description="A sample description"
+            GroupName="sample-name", Description="sample security group"
         )
 
         permission = [
             {
-            "IpProtocol": "TCP",
-            "FromPort": 22,
-            "ToPort": 22,
-            "IpRanges": [{"CidrIp": "0.0.0.0/0"}], 
+                "IpProtocol": "TCP",
+                "FromPort": 22,
+                "ToPort": 22,
+                "IpRanges": [{"CidrIp": "0.0.0.0/0"}],
             }
         ]
 
@@ -126,11 +125,11 @@ def create_compute_instance():
 
     def _deploy_vm(subnet_id, security_group_id, availability_zone):
         instances = ec2.create_instances(
-            ImageId="ami-082b5a644766e0e6f", 
+            ImageId="ami-082b5a644766e0e6f",
             InstanceType="t2.micro",
-            MaxCount=1, #Required
-            MinCount=1, #Required
-            KeyName="sample_hack",
+            MaxCount=1,  # Required
+            MinCount=1,  # Required
+            KeyName="sample_hack",  # Key already uploaded to AWS
             Placement={"AvailabilityZone": availability_zone},
             NetworkInterfaces=[
                 {
@@ -141,19 +140,27 @@ def create_compute_instance():
                 }
             ],
         )
-        waiter = ec2_client.get_waiter('instance_status_ok')
+        waiter = ec2_client.get_waiter("instance_status_ok")
         waiter.wait(InstanceIds=[instances[0].instance_id])
-        #instances[0].wait_until_running()
-        # For some reason, public IP is not present in the instance object. reload() method loads the public IP.
         instances[0].reload()
+
         instance_id = instances[0].instance_id
         public_ip = instances[0].public_ip_address
+
         return public_ip, instance_id
 
-    subnet_id, security_group_id = _deploy_vpc(vpc_name=VPC_NAME, availability_zone=AWS_AVAILABILITY_ZONE)
-    public_ip, instance_id = _deploy_vm(subnet_id=subnet_id, security_group_id=security_group_id, availability_zone=AWS_AVAILABILITY_ZONE)
-    
-    yield ComputeHandle(host=public_ip, port=22, username=ADMIN_USERNAME, instanceid=instance_id)
+    subnet_id, security_group_id = _deploy_vpc(
+        vpc_name=VPC_NAME, availability_zone=AWS_AVAILABILITY_ZONE
+    )
+    public_ip, instance_id = _deploy_vm(
+        subnet_id=subnet_id,
+        security_group_id=security_group_id,
+        availability_zone=AWS_AVAILABILITY_ZONE,
+    )
+
+    yield ComputeHandle(
+        host=public_ip, port=22, username=ADMIN_USERNAME, instanceid=instance_id
+    )
 
 
 def create_compute_ssh_client(compute):
@@ -165,14 +172,20 @@ def create_compute_ssh_client(compute):
     """
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    #client.load_system_host_keys()
+    # client.load_system_host_keys()
+    # Please change me to point me to env. variable
     file_loc = os.path.expanduser("~\Documents\keys\sample_hack.pem")
     privkey = paramiko.RSAKey.from_private_key_file(file_loc)
-    client.connect(hostname=compute.host, port=compute.port, username=compute.username, pkey=privkey)
+    client.connect(
+        hostname=compute.host,
+        port=compute.port,
+        username=compute.username,
+        pkey=privkey,
+    )
 
     return client
 
-    
+
 # Object storage specific helpers to create, destroy and access resources.
 
 
@@ -240,37 +253,45 @@ def create_block_storage_instance():
     """
     ebs_vol = ec2.create_volume(Size=20, AvailabilityZone=AWS_AVAILABILITY_ZONE)
     vol_id = ebs_vol.volume_id
-    waiter = ec2_client.get_waiter("volume_available")  
+    waiter = ec2_client.get_waiter("volume_available")
     waiter.wait(VolumeIds=[vol_id])
-    
+
     yield vol_id
 
 
 def attach_block_storage_to_compute(compute_handle, storage_handle):
 
-    ec2_client.attach_volume(Device="/dev/sdf", InstanceId=compute_handle.instanceid, VolumeId=storage_handle)
-    waiter = ec2_client.get_waiter('volume_in_use')
+    ec2_client.attach_volume(
+        Device="/dev/sdf", InstanceId=compute_handle.instanceid, VolumeId=storage_handle
+    )
+    waiter = ec2_client.get_waiter("volume_in_use")
     waiter.wait(VolumeIds=[storage_handle])
-    
-    script_path = CWD / 'resources' / 'mount_data_disk.sh'
+
+    script_path = CWD / "resources" / "mount_data_disk.sh"
 
     with create_compute_ssh_client(compute_handle) as ssh:
         sftp = ssh.open_sftp()
-        with sftp.file('/tmp/mount_data_disk.sh', 'wb') as remote:
-            with open(script_path, 'rb') as script:
+        with sftp.file("/tmp/mount_data_disk.sh", "wb") as remote:
+            with open(script_path, "rb") as script:
                 remote.write(script.read())
 
-        stdin, stdout, stderr = ssh.exec_command('/bin/bash /tmp/mount_data_disk.sh')
-    return '/datadisk/demo'
+        stdin, stdout, stderr = ssh.exec_command("/bin/bash /tmp/mount_data_disk.sh")
+
+    return "/datadisk/demo"
+
 
 def remove_block_storage_from_compute(compute_handle, storage_handle):
     print("remove_block_storage_from_compute")
     with create_compute_ssh_client(compute_handle) as ssh:
-        #stdin, stdout, stderr = ssh.exec_command('sudo sync')
-        stdin, stdout, stderr = ssh.exec_command('sudo umount -d /dev/xvdf')
-        print("disk unmounted")
-        
-    ec2_client.detach_volume(Device='/dev/sdf', InstanceId=compute_handle.instanceid, VolumeId=storage_handle)
+        stdin, stdout, stderr = ssh.exec_command("sudo umount /dev/xvdf1")
+        LOG.debug("%s %s", stdout.read(), stderr.read())
+
+    ec2_client.detach_volume(
+        Force=True,
+        Device="/dev/sdf",
+        InstanceId=compute_handle.instanceid,
+        VolumeId=storage_handle,
+    )
     waiter = ec2_client.get_waiter("volume_available")
     waiter.wait(VolumeIds=[storage_handle])
 
@@ -301,4 +322,3 @@ def create_relational_database_client(database):
     """
     raise NotImplementedError("create_relational_database_client is not implemented")
     return engine
-
