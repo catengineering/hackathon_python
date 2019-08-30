@@ -39,7 +39,7 @@ def test_block_storage():
         fo = sftp.file(path, 'rb')
         fo.seek(1337)
         read_back = fo.read(len(phrase))
-        remove_block_storage_from_compute(compute1, block)
+        remove_block_storage_from_compute(compute2, block)
 
         assert read_back == phrase, \
             "Data node 1 wrote to block storage didn't read on node 2."
