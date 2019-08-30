@@ -1,7 +1,7 @@
 sqlalchemy
 paramiko
 colorama
-
+boto3
 azure-cli-core==2.0.72
 azure-mgmt-compute==6.0.0
 azure-mgmt-network==5.0.0
