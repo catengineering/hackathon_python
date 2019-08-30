@@ -10,6 +10,13 @@ def create_mysql_database(
     administrator_login_password: str,
     mysql_mgmt_client: MySQLManagementClient
 ) -> Tuple[str, str, str]:
+    """Create a MySQL server, database and necessary config to connect to it.
+
+    Return your chosen server name, database name, and attributed host
+
+    - Resource group exists already
+    - MySQL mgmt client is authenticated and ready to use
+    """
 
     # Solution begin
     import random
