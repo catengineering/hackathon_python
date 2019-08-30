@@ -36,6 +36,7 @@ from tests.metrics import metrics
 
 from hackaton_storage import create_storage_account
 from hackaton_compute import attach_disk, detach_disk
+from hackaton_mysql import create_mysql_database
 
 ##############################################################################
 # Global variables and type definitions
@@ -448,8 +449,8 @@ def create_relational_database_instance():
     resource_group_name = '{}mysql{}'.format(PREFIX, _random_string(20))
     administrator_login = ENV('MYSQL_ADMIN_LOGIN', 'hackaton')
     administrator_login_password = ENV('MYSQL_ADMIN_PASSWORD', "Don't_hardCode-this!12345!")
-    server_name = '{}{}'.format(PREFIX, _random_string(20)).lower()
-    database_name = '{}db'.format(PREFIX)
+    # server_name = '{}{}'.format(PREFIX, _random_string(20)).lower()
+    # database_name = '{}db'.format(PREFIX)
 
     with _deploy_resource_group(resource_group_name, RESOURCE_GROUP_LOCATION):
         mysql = _deploy_mysql(
@@ -457,8 +458,8 @@ def create_relational_database_instance():
             location=RESOURCE_GROUP_LOCATION,
             administrator_login=administrator_login,
             administrator_login_password=administrator_login_password,
-            server_name=server_name,
-            database_name=database_name,
+            # server_name=server_name,
+            # database_name=database_name,
         )
         yield mysql
 
@@ -563,62 +564,21 @@ def _deploy_mysql(
         location,
         administrator_login,
         administrator_login_password,
-        server_name,
-        database_name,
+        # server_name,
+        # database_name,
 ):
     client = _new_client(MySQLManagementClient)
 
-    LOG.debug('Creating database server %s', server_name)
+    LOG.debug('Creating database and server')
 
-    # Here creates a server, and database you can connect to
-    # Populate the "host" variable correctly from what you get from azure
-
-    host = "update this value"
-
-    mysql_deployment = client.servers.create(
-        resource_group_name=resource_group_name,
-        server_name=server_name,
-        parameters=client.servers.models.ServerForCreate(
-            properties=client.servers.models.ServerPropertiesForDefaultCreate(
-                administrator_login=administrator_login,
-                administrator_login_password=administrator_login_password,
-            ),
-            location=location,
-        ),
-    )
-    mysql = mysql_deployment.result()
-
-    if not mysql.fully_qualified_domain_name:
-        mysql = client.servers.get(
-            resource_group_name=resource_group_name,
-            server_name=server_name,
-        )
-    host = mysql.fully_qualified_domain_name
-    LOG.debug('Done creating database server %s at %s', server_name, host)
-
-    LOG.debug('Creating database and firewall rule in server %s', server_name)
-    database_deployment = client.databases.create_or_update(
-        resource_group_name=resource_group_name,
-        server_name=server_name,
-        database_name=database_name,
-        charset=ENV('MYSQL_DATABASE_CHARSET', 'utf8'),
-        collation=ENV('MYSQL_DATABASE_COLLATION', 'utf8_general_ci'),
+    server_name, database_name, host = create_mysql_database(
+        resource_group_name,
+        administrator_login,
+        administrator_login_password,
+        client
     )
 
-    firewall_deployment = client.firewall_rules.create_or_update(
-        resource_group_name=resource_group_name,
-        server_name=server_name,
-        firewall_rule_name=ENV('MYSQL_FIREWALL_RULE_NAME', 'AllowAll'),
-        start_ip_address=ENV('MYSQL_FIREWALL_START_IP_ADDRESS', '0.0.0.0'),
-        end_ip_address=ENV('MYSQL_FIREWALL_END_IP_ADDRESS', '255.255.255.255'),
-    )
-
-    database_deployment.wait()
-    firewall_deployment.wait()
-
-    # Don't touch after this point
-
-    LOG.debug('Done creating database and firewall rule in server %s', server_name)
+    LOG.debug('Done creating database, server and everything needed')
 
     if _is_ip_address(host):
         user = administrator_login
