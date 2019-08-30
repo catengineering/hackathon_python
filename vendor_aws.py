@@ -17,7 +17,7 @@ import socket
 from datetime import timedelta, datetime, timezone
 
 from environs import Env
-
+CWD = Path(__file__).resolve().parent
 from tests.metrics import metrics
 
 # AWS
@@ -27,13 +27,12 @@ import datetime
 from botocore.exceptions import ClientError
 from base64 import b64encode
 
-################
 ##############################################################################
 # Global variables and type definitions
 ##############################################################################
 
 
-ComputeHandle = namedtuple('ComputeHandle', ['host', 'port', 'username'])
+ComputeHandle = namedtuple('ComputeHandle', ['host', 'port', 'username', 'instanceid'])
 
 AWS_ACCESS_KEY_ID = ""
 AWS_SECRET_ACCESS_KEY = ""
@@ -162,13 +161,14 @@ def create_compute_instance():
         instances[0].wait_until_running()
         # For some reason, public IP is not present in the instance object. reload() method loads the public IP.
         instances[0].reload()
+        instance_id = instances[0].instance_id
         public_ip = instances[0].public_ip_address
-        return public_ip
+        return public_ip, instance_id
 
     subnet_id, security_group_id = _deploy_vpc(vpc_name=VPC_NAME, availability_zone=AWS_AVAILABILITY_ZONE)
-    public_ip_addr = _deploy_vm(subnet_id=subnet_id, security_group_id=security_group_id, availability_zone=AWS_AVAILABILITY_ZONE)
+    public_ip, instance_id = _deploy_vm(subnet_id=subnet_id, security_group_id=security_group_id, availability_zone=AWS_AVAILABILITY_ZONE)
     
-    yield ComputeHandle(host=public_ip_addr, port=22, username=ADMIN_USERNAME)
+    yield ComputeHandle(host=public_ip, port=22, username=ADMIN_USERNAME, instanceid=instance_id)
 
 
 def create_compute_ssh_client(compute):
@@ -183,8 +183,133 @@ def create_compute_ssh_client(compute):
     #client.load_system_host_keys()
     file_loc = os.path.expanduser("~\Documents\keys\sample_hack.pem")
     privkey = paramiko.RSAKey.from_private_key_file(file_loc)
-    import pdb;
     client.connect(hostname=compute.host, port=compute.port, username=compute.username, pkey=privkey)
-    pdb.set_trace()
 
     return client
+
+    
+# Object storage specific helpers to create, destroy and access resources.
+
+
+@metrics
+@contextlib.contextmanager
+def create_object_storage_instance():
+    """
+    Create a new object storage instance.
+
+    This context manager should yield a handle to the object storage instance,
+    in a format that other functions in this file can use.
+    """
+    raise NotImplementedError("create_object_storage_instance is not implemented")
+    yield None
+
+
+def object_storage_list(handle):
+    """
+    Given the object yielded by the `create_object_storage_instance` context
+    manager (`handle)`, list all objects contained inside the object store.
+    """
+    raise NotImplementedError("object_storage_list is not implemented")
+
+
+def object_storage_delete(handle, path):
+    """
+    Given the object yielded by the `create_object_storage_instance` context
+    manager (`handle)`, delete the object at `path`.
+    """
+    raise NotImplementedError("object_storage_delete is not implemented")
+
+
+def object_storage_write(handle, path, data):
+    """
+    Given the object yielded by the `create_object_storage_instance` context
+    manager (`handle)`, write the data held in memory as `data` to `path` inside the
+    object storage instance.
+
+    Calls to read that path must return the data bytes as held in memory here.
+    """
+    raise NotImplementedError("object_storage_write is not implemented")
+
+
+def object_storage_read(handle, path):
+    """
+    Given the object yielded by the `create_object_storage_instance` context
+    manager (`handle`), read the data present in the remote object storage instance
+    stored at `path`, and return that data completely read into memory.
+    """
+    raise NotImplementedError("object_storage_read is not implemented")
+
+
+# Block storage specific helpers to create, destroy and attach resources.
+
+
+@metrics
+@contextlib.contextmanager
+def create_block_storage_instance():
+    """
+    Create a new block storage instance, which can be attached to a specific
+    compute instance.
+
+    This context manager should yield a handle to the block storage instance,
+    in a format that other functions in this file can use.
+    """
+    ebs_vol = ec2.create_volume(Size=10, AvailabilityZone=AWS_AVAILABILITY_ZONE)
+    vol_id = ebs_vol.volume_id
+    waiter = ec2_client.get_waiter("volume_available")  
+    waiter.wait(VolumeIds=[vol_id])
+    
+    yield vol_id
+    print(vol_id)
+
+
+def attach_block_storage_to_compute(compute_handle, storage_handle):
+
+    ec2_client.attach_volume(Device="/dev/sdf", InstanceId=compute_handle.instanceid, VolumeId=storage_handle)
+
+    script_path = CWD / 'resources' / 'mount_data_disk.sh'
+
+    with create_compute_ssh_client(compute_handle) as ssh:
+        sftp = ssh.open_sftp()
+        with sftp.file('/tmp/mount_data_disk.sh', 'wb') as remote:
+            with open(script_path, 'rb') as script:
+                remote.write(script.read())
+
+        stdin, stdout, stderr = ssh.exec_command('/bin/bash /tmp/mount_data_disk.sh')
+    return '/datadisk/demo'
+
+def remove_block_storage_from_compute(compute_handle, storage_handle):
+    with create_compute_ssh_client(compute_handle) as ssh:
+        stdin, stdout, stderr = ssh.exec_command('sudo umount -d /dev/xvdf')
+        
+    ec2_client.detach_volume(Device='/dev/sdf', InstanceId=compute_handle.instanceid, VolumeId=storage_handle)
+    waiter = ec2_client.get_waiter("volume_available")
+    waiter.wait(VolumeIds=[storage_handle])
+
+
+# Relational database specific helpers to create, destroy and access resources.
+
+
+@metrics
+@contextlib.contextmanager
+def create_relational_database_instance():
+    """
+    Create a new relational database instance.
+
+    This context manager should yield a handle to the relational database
+    instance, in a format that other functions in this file can use.
+    """
+    raise NotImplementedError("create_relational_database_instance is not implemented")
+    yield None
+
+
+def create_relational_database_client(database):
+    """
+    Given a handle to the database created in `create_relational_database_instance`,
+    return a sqlalchemy engine to connect to that database.
+
+    This function is not expected to call `engine.connect()`, the test
+    suite will do that on the value returned by this function.
+    """
+    raise NotImplementedError("create_relational_database_client is not implemented")
+    return engine
+
