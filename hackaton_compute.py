@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Tuple
 
 from azure.mgmt.compute import ComputeManagementClient
 from azure.mgmt.compute.models import *
@@ -8,36 +8,14 @@ def deploy_shared_network(
     resource_group_name: str,
     location: str,
     network_management_client: NetworkManagementClient,
-    vnet_name='virtualNetwork'
 ) -> str:
     """Create a subnet that a VM can be deployed into
 
     - Resource group already exists
     - Network mgmt client is authenticated and ready to use
     """
-
-    # Solution begin
-    vnet = network_management_client.virtual_networks.create_or_update(
-        resource_group_name,
-        vnet_name,
-        parameters = {
-            'location': location,
-            'addressSpace': {
-                'addressPrefixes': [ "10.1.0.0/24"]
-            },
-            'subnets': [
-                {
-                    'name': 'default',
-                    'properties': {
-                        "addressPrefix": "10.1.0.0/24"
-                    }
-                }
-            ] 
-        }
-    )
-    vnet.wait()
-    subnet_id = next(network_management_client.subnets.list(resource_group_name, vnet_name)).id
-    # Solution end
+    # TODO Create a subnet
+    raise NotImplementedError("Create a Subnet")
 
     return subnet_id
 
@@ -48,84 +26,14 @@ def deploy_vm_networking(
     vm_name: str,
     subnet_id: str,
     network_management_client: NetworkManagementClient
-) -> (str, str):
+) -> Tuple[str, str]:
     """Create the network components necessary to create a publicly accessible VM
 
     - Resource group already exists
     - Network mgmt client is authenticated and ready to use
     """
-
-    # Solution begin
-    import random
-    from string import ascii_letters, digits
-    def _random_string(length, alphabet = ascii_letters + digits) -> str:
-        return ''.join(random.choice(alphabet) for _ in range(length))  # nosec
-
-    network_security_group = network_management_client.network_security_groups.create_or_update(
-        resource_group_name,
-        f'{vm_name}NSG',
-        parameters={
-            'location': location,
-            'securityRules':[
-                {
-                    "name": "SSH",
-                    "properties": {
-                        "priority": 300,
-                        "protocol": "TCP",
-                        "access": "Allow",
-                        "direction": "Inbound",
-                        "sourceAddressPrefix": "*",
-                        "sourcePortRange": "*",
-                        "destinationAddressPrefix": "*",
-                        "destinationPortRange": "22"
-                    }
-                }
-            ]
-        }
-    )
-    
-    public_ip = network_management_client.public_ip_addresses.create_or_update(
-        resource_group_name,
-        f'{vm_name}PublicIp',
-        parameters={
-            'location': location,
-            "publicIpAllocationMethod": "Dynamic",
-            "dnsSettings": {
-                "domainNameLabel": 'hack-' + _random_string(8).lower()
-            }
-        }
-    ).result()
-
-    public_ip_address_id = public_ip.id
-    public_ip_address = public_ip.dns_settings.fqdn
-    network_security_group_id = network_security_group.result().id
-
-    nic = network_management_client.network_interfaces.create_or_update(
-        resource_group_name,
-        f'{vm_name}Nic',
-        parameters= {
-            "location": location,
-            "ipConfigurations": [
-                    {
-                        "name": "ipconfig1",
-                        "properties": {
-                            "subnet": {
-                                "id": subnet_id
-                            },
-                            "privateIPAllocationMethod": "Dynamic",
-                            "publicIpAddress": {
-                                "id": public_ip_address_id
-                            }
-                        }
-                    }
-                ],
-                "networkSecurityGroup": {
-                    "id": network_security_group_id
-                }
-            }
-    )
-    nic_id = nic.result().id
-    # Solution end
+    # TODO Create network components for a VM
+    raise NotImplementedError("Create network components for a VM")
 
     return nic_id, public_ip_address
 
@@ -139,55 +47,13 @@ def deploy_vm(
     public_key: str,
     compute_management_client: ComputeManagementClient
 ) -> VirtualMachine:
-    """Create a virtual machine
+    """Create a virtual machine that you can SSH into
     
     - Resource group already exists
     - Compute mgmt client is authenticated and ready to use
     """
-
-    # Solution begin
-    virtual_machine = compute_management_client.virtual_machines.create_or_update(
-        resource_group_name = resource_group_name,
-        vm_name=vm_name,
-        parameters= {
-            'location': location,
-            'os_profile': {
-                'computer_name': vm_name,
-                'admin_username': admin_user_name,
-                'linuxConfiguration': {
-                    'disablePasswordAuthentication': True,
-                    'ssh': {
-                        'publicKeys': [
-                            {
-                                'path': f'/home/{admin_user_name}/.ssh/authorized_keys',
-                                'keyData': public_key
-                            }
-                        ]
-                    }
-                }
-            },
-            'hardware_profile': {
-                'vm_size': 'Standard_DS1_v2'
-            },
-            'storage_profile': {
-                'image_reference': {
-                    'publisher': 'Canonical',
-                    'offer': 'UbuntuServer',
-                    'sku': '16.04.0-LTS',
-                    'version': 'latest'
-                },
-                "dataDisks": [
-                ]
-            },
-            'network_profile': {
-                'network_interfaces': [{
-                    'id': nic_id,
-                }]
-            },
-        }
-    )
-    vm = virtual_machine.result()
-    # Solution end
+    # TODO Create a VM that you can SSH into
+    raise NotImplementedError("Create a VM that you can SSH into")
 
     return vm
 
@@ -202,26 +68,8 @@ def create_disk(
     - Resource group already exists
     - Compute mgmt client is authenticated and ready to use
     """
-
-    # Solution start
-    disk_name = 'disk'
-    disk = compute_management_client.disks.create_or_update(
-        resource_group_name,
-        disk_name,
-        disk={
-            "location": location,
-            "sku":{
-                "name": "Standard_LRS"
-            },
-            "creationData": {
-                "createOption": "Empty"
-            },
-            "diskSizeGB": 1
-        }
-    )
-    disk_definition = disk.result()
-    disk_id = disk_definition.id
-    # Solution end
+    # TODO Create a managed disk
+    raise NotImplementedError("Create a managed disk")
 
     return disk_id
 
@@ -237,29 +85,8 @@ def attach_disk(
     - Resource group, VM and disk exist already
     - Compute mgmt client is authenticated and ready to use
     """
-
-    # Solution begin
-    vm_definition = compute_management_client.virtual_machines.get(
-        resource_group_name,
-        virtual_machine_name
-    )
-
-    disk_name = disk_id.split('/')[-1]
-
-    vm_definition.storage_profile.data_disks.append({
-        'lun': 13,
-        'name': disk_name,
-        'create_option': "Attach",
-        'managed_disk': {
-            'id': disk_id
-        }
-    })
-    compute_management_client.virtual_machines.create_or_update(
-        resource_group_name,
-        virtual_machine_name,
-        vm_definition
-    ).wait()
-    # Solution end
+    # TODO Attach the given disk to the given VM
+    raise NotImplementedError("Attach the given disk to the given VM")
 
 def detach_disk(
     resource_group_name: str,
@@ -267,28 +94,13 @@ def detach_disk(
     disk_id: str,
     compute_management_client: ComputeManagementClient
 ) -> None:
-    """Detach the given disk to the given VM
+    """Detach the given disk from the given VM
 
     - Resource group, VM and disk exist already
     - Compute mgmt client is authenticated and ready to use
     """
-    # Solution begin
-    vm_definition = compute_management_client.virtual_machines.get(
-        resource_group_name,
-        virtual_machine_name
-    )
-
-    disk_name = disk_id.split('/')[-1]
-
-    vm_definition.storage_profile.data_disks = [
-        d for d in vm_definition.storage_profile.data_disks if not d.name == disk_name
-    ]    
-    compute_management_client.virtual_machines.create_or_update(
-        resource_group_name,
-        virtual_machine_name,
-        vm_definition
-    ).wait()
-    # Solution end
+    # TODO Detach the given disk from the given VM
+    raise NotImplementedError("Detach the given disk from the given VM")
 
 
 def execute_script(
@@ -309,18 +121,7 @@ def execute_script(
     """
     stdout_msg = None
 
-    # Solution begin
-    run_command_parameters = {
-        'command_id': 'RunShellScript', # For linux, don't change it
-        'script': script
-    }
-    poller = compute_management_client.virtual_machines.run_command(
-        resource_group_name,
-        virtual_machine_name,
-        run_command_parameters
-    )
-    result = poller.result()  # Blocking till executed
-    stdout_msg = result.value[0].message
-    # Solution end
+    # TODO Execute this shell script on the givem VM
+    raise NotImplementedError("Execute this shell script on the givem VM")
 
     return stdout_msg
