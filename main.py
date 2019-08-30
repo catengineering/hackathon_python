@@ -68,7 +68,9 @@ def main(*args):
     with test_environment():
         print("")
         for case in test.all_tests:
-            case()
+            resource_group_name =  '{}{}{}'.format(vendor.PREFIX, case.__name__, vendor._random_string(20))
+            with vendor._deploy_resource_group(resource_group_name, vendor.RESOURCE_GROUP_LOCATION):
+                case(resource_group_name)
             print("")
     print(Fore.GREEN + Style.BRIGHT + "\nRun complete. Metrics:" + Style.RESET_ALL)
     metrics.output()

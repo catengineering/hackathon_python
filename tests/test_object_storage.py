@@ -13,14 +13,14 @@ from vendor import (
 )
 
 @test
-def test_storage_instance_simple():
+def test_storage_instance_simple(resource_group_name):
     path = "oak is strong and also gives shade"
     data = ("Cats and dogs each hate the other. The pipe began to rust "
             "while new. Open the crate but don't break the glass. Add "
             "the sum to the product of these three.").encode()
 
     computed_hash = hashlib.sha256(data).hexdigest()
-    with create_object_storage_instance() as handle:
+    with create_object_storage_instance(resource_group_name) as handle:
         object_storage_write(handle, path, data)
         read_data = object_storage_read(handle, path)
         read_data_hash = hashlib.sha256(read_data.strip()).hexdigest()
@@ -30,12 +30,12 @@ def test_storage_instance_simple():
 
 
 @test
-def test_storage_instance_crud():
+def test_storage_instance_crud(resource_group_name):
     data = ("Cats and dogs each hate the other. The pipe began to rust "
             "while new. Open the crate but don't break the glass. Add "
             "the sum to the product of these three.").encode()
 
-    with create_object_storage_instance() as handle:
+    with create_object_storage_instance(resource_group_name) as handle:
 
         paths = object_storage_list(handle)
         assert len(paths) == 0, "objects already exist in the object store"
