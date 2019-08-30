@@ -35,6 +35,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from tests.metrics import metrics
 
 from hackaton_storage import create_storage_account
+from hackaton_compute import attach_disk
 
 ##############################################################################
 # Global variables and type definitions
@@ -389,16 +390,15 @@ def create_block_storage_instance():
 
 def attach_block_storage_to_compute(compute_handle, storage_handle):
     client = _new_client(ComputeManagementClient)
-    vm_definition = client.virtual_machines.get(compute_handle.resource_group, compute_handle.name)
-    vm_definition.storage_profile.data_disks.append({
-        'lun': 13,
-        'name': storage_handle.name,
-        'create_option': "Attach",
-        'managed_disk': {
-            'id': storage_handle.id
-        }
-    })
-    client.virtual_machines.create_or_update(compute_handle.resource_group, compute_handle.name, vm_definition).wait()
+
+    LOG.debug("Attaching disk %s to %s", storage_handle.id, compute_handle.name)
+    attach_disk(
+        compute_handle.resource_group,
+        compute_handle.name,
+        storage_handle.id,
+        client
+    )
+    LOG.debug("Disk attached")
 
     script_path = CWD / 'resources' / 'mount_data_disk.sh'
 
