@@ -35,7 +35,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from tests.metrics import metrics
 
 from hackaton_storage import create_storage_account
-from hackaton_compute import attach_disk, detach_disk
+from hackaton_compute import attach_disk, detach_disk, deploy_shared_network, deploy_vm_networking, deploy_vm
 from hackaton_mysql import create_mysql_database
 
 ##############################################################################
@@ -107,151 +107,18 @@ def create_compute_instance():
     """
     COMPUTE_RESOURCE_GROUP_NAME='{}comp{}'.format(PREFIX, _random_string(20))
 
-    def _deploy_shared_network(resource_group_name, location, vnet_name='virtualNetwork'):
-        client = _new_client(NetworkManagementClient)
-        vnet = client.virtual_networks.create_or_update(
-            resource_group_name,
-            vnet_name,
-            parameters = {
-                'location': location,
-                'addressSpace': {
-                    'addressPrefixes': [ "10.1.0.0/24"]
-                },
-                'subnets': [
-                    {
-                        'name': 'default',
-                        'properties': {
-                            "addressPrefix": "10.1.0.0/24"
-                        }
-                    }
-                ] 
-            }
-        )
-        vnet.wait()
-        return next(client.subnets.list(resource_group_name, vnet_name)).id
-
-    def _deploy_vm_network(resource_group_name, vm_name, *, subnet_id, location):
-        client = _new_client(NetworkManagementClient)
-        network_security_group = client.network_security_groups.create_or_update(
-            resource_group_name,
-            f'{vm_name}NSG',
-            parameters={
-                'location': location,
-                'securityRules':[
-                    {
-                        "name": "SSH",
-                        "properties": {
-                            "priority": 300,
-                            "protocol": "TCP",
-                            "access": "Allow",
-                            "direction": "Inbound",
-                            "sourceAddressPrefix": "*",
-                            "sourcePortRange": "*",
-                            "destinationAddressPrefix": "*",
-                            "destinationPortRange": "22"
-                        }
-                    }
-                ]
-            }
-        )
-        
-        public_ip = client.public_ip_addresses.create_or_update(
-            resource_group_name,
-            f'{vm_name}PublicIp',
-            parameters={
-                'location': location,
-                "publicIpAllocationMethod": "Dynamic",
-                "dnsSettings": {
-                    "domainNameLabel": 'hack-' + _random_string(8).lower()
-                }
-            }
-        ).result()
-
-        public_ip_address_id = public_ip.id
-        public_ip_address = public_ip.dns_settings.fqdn
-        network_security_group_id = network_security_group.result().id
-
-        nic = client.network_interfaces.create_or_update(
-            resource_group_name,
-            f'{vm_name}Nic',
-            parameters= {
-                "location": location,
-                "ipConfigurations": [
-                        {
-                            "name": "ipconfig1",
-                            "properties": {
-                                "subnet": {
-                                    "id": subnet_id
-                                },
-                                "privateIPAllocationMethod": "Dynamic",
-                                "publicIpAddress": {
-                                    "id": public_ip_address_id
-                                }
-                            }
-                        }
-                    ],
-                    "networkSecurityGroup": {
-                        "id": network_security_group_id
-                    }
-                }
-        )
-
-        return nic.result().id, public_ip_address
-
-    def _deploy_vm(resource_group_name, vm_name, *, admin_user_name, public_key, nic_id, location):
-        client = _new_client(ComputeManagementClient)
-
-        virtual_machine = client.virtual_machines.create_or_update(
-            resource_group_name = resource_group_name,
-            vm_name=vm_name,
-            parameters= {
-                'location': location,
-                'os_profile': {
-                    'computer_name': vm_name,
-                    'admin_username': admin_user_name,
-                    'linuxConfiguration': {
-                        'disablePasswordAuthentication': True,
-                        'ssh': {
-                            'publicKeys': [
-                                {
-                                    'path': f'/home/{admin_user_name}/.ssh/authorized_keys',
-                                    'keyData': public_key
-                                }
-                            ]
-                        }
-                    }
-                },
-                'hardware_profile': {
-                    'vm_size': 'Standard_DS1_v2'
-                },
-                'storage_profile': {
-                    'image_reference': {
-                        'publisher': 'Canonical',
-                        'offer': 'UbuntuServer',
-                        'sku': '16.04.0-LTS',
-                        'version': 'latest'
-                    },
-                    "dataDisks": [
-                    ]
-                },
-                'network_profile': {
-                    'network_interfaces': [{
-                        'id': nic_id,
-                    }]
-                },
-            }
-        )
-        return virtual_machine.result()
-
     vm_name = 'vm{}'.format(_random_string(20))
 
     with open(SSH_PUBLIC_KEY, 'r') as f:
         ssh_public_key = f.read()
 
     with _deploy_resource_group(COMPUTE_RESOURCE_GROUP_NAME, RESOURCE_GROUP_LOCATION):
-        subnet_id = _deploy_shared_network(COMPUTE_RESOURCE_GROUP_NAME, RESOURCE_GROUP_LOCATION)
-        nic_id, public_ip = _deploy_vm_network(COMPUTE_RESOURCE_GROUP_NAME, vm_name, subnet_id=subnet_id, location=RESOURCE_GROUP_LOCATION)
-        vm = _deploy_vm(COMPUTE_RESOURCE_GROUP_NAME, vm_name, admin_user_name=ADMIN_USERNAME, location=RESOURCE_GROUP_LOCATION, nic_id=nic_id, public_key=ssh_public_key)
+        network_client = _new_client(NetworkManagementClient)
+        compute_client = _new_client(ComputeManagementClient)
+        
+        subnet_id = deploy_shared_network(COMPUTE_RESOURCE_GROUP_NAME, RESOURCE_GROUP_LOCATION, network_client)
+        nic_id, public_ip = deploy_vm_networking(COMPUTE_RESOURCE_GROUP_NAME, RESOURCE_GROUP_LOCATION, vm_name, subnet_id, network_client)
+        vm = deploy_vm(COMPUTE_RESOURCE_GROUP_NAME, vm_name, ADMIN_USERNAME, RESOURCE_GROUP_LOCATION, nic_id, ssh_public_key, compute_client)
 
         yield ComputeHandle(resource_group=COMPUTE_RESOURCE_GROUP_NAME, name=vm_name, host=public_ip, port=22, username=ADMIN_USERNAME)
 
