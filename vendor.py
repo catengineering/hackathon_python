@@ -35,7 +35,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from tests.metrics import metrics
 
 from hackaton_storage import create_storage_account
-from hackaton_compute import attach_disk
+from hackaton_compute import attach_disk, detach_disk
 
 ##############################################################################
 # Global variables and type definitions
@@ -424,10 +424,14 @@ def remove_block_storage_from_compute(compute_handle, storage_handle):
         LOG.debug('%s %s', stdout.read(), stderr.read())
         
     client = _new_client(ComputeManagementClient)
-    vm_definition = client.virtual_machines.get(compute_handle.resource_group, compute_handle.name)
-    vm_definition.storage_profile.data_disks = [d for d in vm_definition.storage_profile.data_disks if not d.name == storage_handle.name]    
-    client.virtual_machines.create_or_update(compute_handle.resource_group, compute_handle.name, vm_definition).wait()
-
+    LOG.debug("Detaching disk %s to %s", storage_handle.id, compute_handle.name)
+    detach_disk(
+        compute_handle.resource_group,
+        compute_handle.name,
+        storage_handle.id,
+        client
+    )
+    LOG.debug("Disk detached")
 
 # Relational database specific helpers to create, destroy and access resources.
 
