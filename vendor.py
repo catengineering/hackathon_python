@@ -35,7 +35,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from tests.metrics import metrics
 
 from hackaton_storage import create_storage_account
-from hackaton_compute import attach_disk, detach_disk, deploy_shared_network, deploy_vm_networking, deploy_vm
+from hackaton_compute import create_disk, attach_disk, detach_disk, deploy_shared_network, deploy_vm_networking, deploy_vm
 from hackaton_mysql import create_mysql_database
 
 ##############################################################################
@@ -228,35 +228,18 @@ def create_block_storage_instance(resource_group_name):
     This context manager should yield a handle to the block storage instance,
     in a format that other functions in this file can use.
     """
-    client = _new_client(ComputeManagementClient)
-    disk_name = 'disk'
-    
-    disk = client.disks.create_or_update(
-        resource_group_name,
-        disk_name,
-        disk={
-            "location": RESOURCE_GROUP_LOCATION,
-            "sku":{
-                "name": "Standard_LRS"
-            },
-            "creationData": {
-                "createOption": "Empty"
-            },
-            "diskSizeGB": 1
-        }
-    )
-    disk_definition = disk.result()
-    yield BlockStorageHandle(disk_definition.id, resource_group_name, name=disk_definition.name)
+    compute_client = _new_client(ComputeManagementClient)
+    yield create_disk(resource_group_name, RESOURCE_GROUP_LOCATION, compute_client)
 
 
 def attach_block_storage_to_compute(compute_handle, storage_handle):
     client = _new_client(ComputeManagementClient)
 
-    LOG.debug("Attaching disk %s to %s", storage_handle.id, compute_handle.name)
+    LOG.debug("Attaching disk %s to %s", storage_handle, compute_handle.name)
     attach_disk(
         compute_handle.resource_group,
         compute_handle.name,
-        storage_handle.id,
+        storage_handle,
         client
     )
     LOG.debug("Disk attached")
@@ -285,11 +268,11 @@ def remove_block_storage_from_compute(compute_handle, storage_handle):
         LOG.debug('%s %s', stdout.read(), stderr.read())
         
     client = _new_client(ComputeManagementClient)
-    LOG.debug("Detaching disk %s to %s", storage_handle.id, compute_handle.name)
+    LOG.debug("Detaching disk %s to %s", storage_handle, compute_handle.name)
     detach_disk(
         compute_handle.resource_group,
         compute_handle.name,
-        storage_handle.id,
+        storage_handle,
         client
     )
     LOG.debug("Disk detached")

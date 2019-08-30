@@ -190,6 +190,40 @@ def deploy_vm(
     return vm
 
 
+def create_disk(
+    resource_group_name: str,
+    location: str,
+    compute_management_client: ComputeManagementClient
+) -> str:
+    """Create a new managed disk
+
+    - Resource group already exists
+    - Compute mgmt client is authenticated and ready to use
+    """
+
+    # Solution start
+    disk_name = 'disk'
+    disk = compute_management_client.disks.create_or_update(
+        resource_group_name,
+        disk_name,
+        disk={
+            "location": location,
+            "sku":{
+                "name": "Standard_LRS"
+            },
+            "creationData": {
+                "createOption": "Empty"
+            },
+            "diskSizeGB": 1
+        }
+    )
+    disk_definition = disk.result()
+    disk_id = disk_definition.id
+    # Solution end
+
+    return disk_id
+
+
 def attach_disk(
     resource_group_name: str,
     virtual_machine_name: str,
