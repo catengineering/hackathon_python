@@ -505,19 +505,7 @@ def _new_client(client_type):
         LOG.debug('Using custom ARM endpoint %s for %s', base_url, client_type.__name__)
     else:
         LOG.debug('Using default ARM endpoint for %s', client_type.__name__)
-
-    auth_path = expanduser(ENV('AZURE_AUTH_LOCATION', ''))
-    if auth_path and Path(auth_path).is_file():
-        LOG.debug('Using auth file %s for %s', auth_path, client_type.__name__)
-        client_args['auth_path'] = auth_path
-
-    try:
-        client = get_client_from_auth_file(client_type, **client_args)
-    except FileNotFoundError:
-        client = get_client_from_cli_profile(client_type, **client_args)
-        LOG.warning('Auth file not found, falling back to CLI profile for %s', client_type.__name__)
-
-    return client
+    return get_client_from_cli_profile(client_type, **client_args)
 
 
 @contextlib.contextmanager
