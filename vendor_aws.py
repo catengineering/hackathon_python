@@ -1,14 +1,56 @@
+# encoding: utf-8
+
+import contextlib
+import paramiko
+
+from functools import lru_cache
+from logging import FileHandler, Formatter, StreamHandler, getLogger
+from os.path import expanduser
+from pathlib import Path
+from contextlib import contextmanager
+from collections import namedtuple
+from urllib.parse import urlparse
+import random
+from ipaddress import ip_address
+from string import ascii_letters, digits
+import socket
+from datetime import timedelta, datetime, timezone
+
+from environs import Env
+
+from tests.metrics import metrics
+
+# AWS
+import os
 import boto3
 import datetime
 from botocore.exceptions import ClientError
+from base64 import b64encode
 
-# Setup env. variables
-AWS_ACCESS_KEY_ID = ""
-AWS_SECRET_ACCESS_KEY = ""
+################
+##############################################################################
+# Global variables and type definitions
+##############################################################################
+
+
+ComputeHandle = namedtuple('ComputeHandle', ['host', 'port', 'username'])
+
+AWS_ACCESS_KEY_ID = "AKIAUMTKTERTK34TG3UC"
+AWS_SECRET_ACCESS_KEY = "RcgUxmmUPBgxmKV3BwMPWZik4eblsVY0Kd2onA0y"
 AWS_REGION = "us-west-2"
 AWS_AVAILABILITY_ZONE = "us-west-2a"
+VPC_NAME = "sample_VPC"
+ADMIN_USERNAME= "ubuntu"
 
-client = boto3.client(
+
+ec2 = boto3.resource(
+    "ec2",
+    region_name=AWS_REGION,
+    aws_access_key_id=AWS_ACCESS_KEY_ID,
+    aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+)
+
+ec2_client = boto3.client(
     "ec2",
     region_name=AWS_REGION,
     aws_access_key_id=AWS_ACCESS_KEY_ID,
@@ -21,144 +63,126 @@ ssm_client = boto3.client(
     aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
 )
 
-ec2 = boto3.resource(
-    "ec2",
-    region_name=AWS_REGION,
-    aws_access_key_id=AWS_ACCESS_KEY_ID,
-    aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-)
+# Global configuration of the environment to run tests in.
+#############
+
+def setup_environment():
+    """
+    Preform any initial configuring of the environment needed to preform any
+    of the calls in this file.
+    """
 
 
-# Create the VPC
-vpc = ec2.create_vpc(CidrBlock="10.0.0.0/16", AmazonProvidedIpv6CidrBlock=True)
-client.modify_vpc_attribute( VpcId = vpc.id , EnableDnsHostnames = { 'Value': True } )
 
-# Assign name to the vpc
-vpc.create_tags(Tags=[{"Key": "Name", "Value": "sample_vpc"}])
-vpc.wait_until_available()
-print(vpc.id)
+def teardown_environment():
+    """
+    Preform any teardown required after running any of the actions in this file.
 
-# Create an Internet Gateway and attach it to the VPC
-internet_gateway = ec2.create_internet_gateway()
-internet_gateway.attach_to_vpc(VpcId=vpc.vpc_id)
-print(internet_gateway.id)
-
-# Create Route Table (public route)
-route_table = vpc.create_route_table()
-
-# Create both IPv4 & IPv6 route
-route_ig_ipv4 = route_table.create_route(
-    DestinationCidrBlock="0.0.0.0/0", GatewayId=internet_gateway.internet_gateway_id
-)
-##route_ig_ipv6 = route_table.create_route(DestinationIpv6CidrBlock='::/0', GatewayId=internet_gateway.internet_gateway_id)
-print(route_table.id)
-
-# Create a subnet in our VPC
-##ipv6_subnet_cidr = vpc.ipv6_cidr_block_association_set[0]['Ipv6CidrBlock']
-##ipv6_subnet_cidr = ipv6_subnet_cidr[:-2] + '64'
-subnet = vpc.create_subnet(
-    CidrBlock="10.0.0.0/24", AvailabilityZone=AWS_AVAILABILITY_ZONE
-)  # Ipv6CidrBlock=ipv6_subnet_cidr)
-
-# Associate the route table with subnet
-route_table.associate_with_subnet(SubnetId=subnet.id)
-
-# Create Security group
-sg = vpc.create_security_group(
-    GroupName="sample-name", Description="A sample description"
-)
-
-ip_ranges = [{"CidrIp": "0.0.0.0/0"}]
-
-##ip_v6_ranges = [{
-##'CidrIpv6': '::/0'
-##}]
-
-perms = [
-    {
-        "IpProtocol": "TCP",
-        "FromPort": 80,
-        "ToPort": 80,
-        "IpRanges": ip_ranges,
-        ##'Ipv6Ranges': ip_v6_ranges
-    },
-    {
-        "IpProtocol": "TCP",
-        "FromPort": 443,
-        "ToPort": 443,
-        "IpRanges": ip_ranges,
-        ##'Ipv6Ranges': ip_v6_ranges
-    },
-    {
-        "IpProtocol": "TCP",
-        "FromPort": 22,
-        "ToPort": 22,
-        "IpRanges": ip_ranges,  # Remember to change this!
-        ##'Ipv6Ranges': ip_v6_ranges # Remember to change this!
-    },
-]
-
-sg.authorize_ingress(IpPermissions=perms)
-print(sg.id)
-
-# Create instance
-instances = ec2.create_instances(
-    ImageId="ami-835b4efa",
-    InstanceType="t2.micro",
-    MaxCount=1,
-    MinCount=1,
-    KeyName="sample",
-    Placement={"AvailabilityZone": AWS_AVAILABILITY_ZONE},
-    NetworkInterfaces=[
-        {
-            "SubnetId": subnet.id,
-            "DeviceIndex": 0,
-            "AssociatePublicIpAddress": True,
-            "Groups": [sg.group_id],
-        }
-    ],
-)
-instances[0].wait_until_running()
-
-print(instances[0].id)
-
-# Create EBS
-ebs_vol = ec2.create_volume(Size=20, AvailabilityZone=AWS_AVAILABILITY_ZONE)
-
-# Wait for the volume to become available
-waiter = client.get_waiter("volume_available")
-waiter.wait(VolumeIds=[ebs_vol.volume_id])
-
-print(ebs_vol.id)
-
-# Attach EBS to Ec2
-attach_response = client.attach_volume(
-        Device="/dev/sdf", InstanceId='i-07a38670ce8345', VolumeId='vol-0ad988ab18d387456'
- )
+    This should completley shut down or destroy any running resources that were
+    spun up as a result of running the functions in this file.
+    """
 
 
-# # Detach volume
-# detach_response = client.detach_volume(
-#     Device='/dev/sdf',
-#     Force=False,
-#     InstanceId='i-0fd344b2886c4791b',
-#     VolumeId='vol-0ad988ab18d387418'
-# )
-# waiter = client.get_waiter("volume_available")
-# waiter.wait(VolumeIds=["vol-0ad988ab18d387418"])
+# Compute-specficic helpers to create, destroy and access resources.
 
-# # Run commands on Ec2 instance
-# response = ssm_client.send_command(
-#              InstanceIds=[
-#                 "i-07a38670ce8f32116" 
-#                      ],
-#              DocumentName="AWS-RunShellScript",
-#              Parameters={
-#                 'commands':['mount /dev/xvdf /data']
-#                    },
-#              )
-# command_id = response['Command']['CommandId']
-# output = ssm_client.get_command_invocation(
-#       CommandId=command_id,
-#       InstanceId='i-07a38670ce8f32116',
-#     )
+
+@metrics
+@contextlib.contextmanager
+def create_compute_instance():
+    """
+    Create a new compute instance from a Linux VM Image. It should be completely
+    new, and created dynamically at call time.
+
+    This context manager should yield a handle to the new image, in a format
+    that other functions in this file can use (such as
+    `create_object_storage_instance`).
+    """
+
+    def _deploy_vpc(vpc_name, availability_zone):
+        vpc = ec2.create_vpc(CidrBlock="10.0.0.0/16")
+        ec2_client.modify_vpc_attribute( VpcId = vpc.id , EnableDnsHostnames = { 'Value': True } )
+
+        # Assign name to the vpc
+        vpc.create_tags(Tags=[{"Key": "Name", "Value": vpc_name}])
+        vpc.wait_until_available()
+
+        # Create an Internet Gateway and attach it to the vpc
+        internet_gateway = ec2.create_internet_gateway()
+        internet_gateway.attach_to_vpc(VpcId=vpc.vpc_id)
+
+        # Create Route Table (public route)
+        route_table = vpc.create_route_table()
+        route_ig_ipv4 = route_table.create_route(
+            DestinationCidrBlock="0.0.0.0/0", GatewayId=internet_gateway.internet_gateway_id
+        )
+
+        # Create a subnet in our VPC
+        subnet = vpc.create_subnet(
+        CidrBlock="10.0.0.0/24", AvailabilityZone=availability_zone
+        )
+
+        # Associate the route table with subnet
+        route_table.associate_with_subnet(SubnetId=subnet.id)
+
+        # Create Security group
+        security_group = vpc.create_security_group(
+            GroupName="sample-name", Description="A sample description"
+        )
+
+        permission = [
+            {
+            "IpProtocol": "TCP",
+            "FromPort": 22,
+            "ToPort": 22,
+            "IpRanges": [{"CidrIp": "0.0.0.0/0"}], 
+            }
+        ]
+
+        security_group.authorize_ingress(IpPermissions=permission)
+
+        return subnet.id, security_group.group_id
+
+    def _deploy_vm(subnet_id, security_group_id, availability_zone):
+        instances = ec2.create_instances(
+            ImageId="ami-835b4efa",
+            InstanceType="t2.micro",
+            MaxCount=1, #Required
+            MinCount=1, #Required
+            KeyName="sample_hack",
+            Placement={"AvailabilityZone": availability_zone},
+            NetworkInterfaces=[
+                {
+                    "SubnetId": subnet_id,
+                    "DeviceIndex": 0,
+                    "AssociatePublicIpAddress": True,
+                    "Groups": [security_group_id],
+                }
+            ],
+        )
+        instances[0].wait_until_running()
+        # For some reason, public IP is not present in the instance object. reload() method loads the public IP.
+        instances[0].reload()
+        public_ip = instances[0].public_ip_address
+        return public_ip
+
+    subnet_id, security_group_id = _deploy_vpc(vpc_name=VPC_NAME, availability_zone=AWS_AVAILABILITY_ZONE)
+    public_ip_addr = _deploy_vm(subnet_id=subnet_id, security_group_id=security_group_id, availability_zone=AWS_AVAILABILITY_ZONE)
+    
+    yield ComputeHandle(host=public_ip_addr, port=22, username=ADMIN_USERNAME)
+
+
+def create_compute_ssh_client(compute):
+    """
+    Given the handle provided from `create_compute_instance`,
+    create a `paramiko.client.SSHClient`
+
+    be sure to `.connect()` to the machine before returning the SSHClient handle.
+    """
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    #client.load_system_host_keys()
+    file_loc = os.path.expanduser("~\Documents\keys\sample_hack.pem")
+    privkey = paramiko.RSAKey.from_private_key_file(file_loc)
+    client.connect(hostname=compute.host, port=compute.port, username=compute.username, pkey=privkey)
+
+    return client
