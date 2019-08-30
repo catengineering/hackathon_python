@@ -34,6 +34,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from tests.metrics import metrics
 
+from hackaton_storage import create_storage_account
 
 ##############################################################################
 # Global variables and type definitions
@@ -285,13 +286,13 @@ def create_object_storage_instance():
 
     with _deploy_resource_group(resource_group_name, RESOURCE_GROUP_LOCATION):
 
-        storage_account_name = '{}storage{}'.format(PREFIX, _random_string(20)).lower()[:24]
+        #storage_account_name = '{}storage{}'.format(PREFIX, _random_string(20)).lower()[:24]
 
         try:
             storage = _deploy_storage(
                 resource_group_name=resource_group_name,
                 location=RESOURCE_GROUP_LOCATION,
-                account_name=storage_account_name,
+                #account_name=storage_account_name,
             )
 
             blob_client = BlockBlobService(
@@ -301,10 +302,10 @@ def create_object_storage_instance():
 
             blob_client.create_container(container_name, fail_on_exist=False)
         except ClientException as ex:
-            LOG.debug('Error in storage account %s or container %s: %s', storage_account_name, container_name, ex)
+            LOG.debug('Error in storage account %s or container %s: %s', storage.account_name, container_name, ex)
             raise
         else:
-            LOG.debug('Storage account %s and container %s are available', storage_account_name, container_name)
+            LOG.debug('Storage account %s and container %s are available', storage.account_name, container_name)
 
         yield ObjectStorageHandle(
             blob_client=blob_client,
@@ -534,33 +535,18 @@ def _deploy_resource_group(
 def _deploy_storage(
         resource_group_name: str,
         location: str,
-        account_name: str,
+        #account_name: str,
         sku: str = ENV('STORAGE_SKU', 'Standard_LRS'),
 ):
     client = _new_client(StorageManagementClient)
 
-    LOG.debug('Creating storage account %s', account_name)
-    storage_deployment = client.storage_accounts.create(
-        resource_group_name=resource_group_name,
-        account_name=account_name,
-        parameters=client.storage_accounts.models.StorageAccountCreateParameters(
-            sku=client.storage_accounts.models.Sku(
-                name=sku,
-            ),
-            kind=client.storage_accounts.models.Kind.storage,
-            location=location,
-        ),
+    LOG.debug('Creating storage account')
+
+    account_name, account_key = create_storage_account(
+        resource_group_name,
+        client        
     )
-    storage = storage_deployment.result()
-
-    LOG.debug('Done creating storage account %s', account_name)
-
-    LOG.debug('Fetching access keys for storage account %s', account_name)
-    account_key = client.storage_accounts.list_keys(
-        resource_group_name=resource_group_name,
-        account_name=account_name,
-    ).keys[0].value
-    LOG.debug('Done fetching access keys for storage account %s', account_name)
+    LOG.debug('Created storage account %s', account_name)
 
     return StorageHandle(
         account_name=account_name,
