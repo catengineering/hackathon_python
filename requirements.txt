@@ -11,7 +11,13 @@ azure-mgmt-network==5.0.0
 azure-mgmt-rdbms==1.9.0
 azure-mgmt-resource==3.1.0
 azure-mgmt-storage==4.0.0
-azure-storage-blob==2.1.0
+azure-mgmt-eventhub
+azure-identity
+azure-keyvault-keys
+azure-keyvault-secrets
+azure-storage-blob==12.0.0b1
+azure-storage-file
+azure-storage-queue
 environs==4.1.0
 mysqlclient==1.4.2.post1
 pymysql==0.9.3

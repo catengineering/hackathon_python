@@ -22,7 +22,7 @@ from azure.common.client_factory import get_client_from_auth_file, get_client_fr
 from azure.mgmt.resource import ResourceManagementClient
 from azure.mgmt.storage import StorageManagementClient
 from azure.mgmt.rdbms.mysql import MySQLManagementClient
-from azure.storage.blob import BlockBlobService
+from azure.storage.blob import BlobServiceClient, ContainerClient, BlobClient
 from msrestazure.azure_exceptions import ClientException
 from environs import Env
 
@@ -55,7 +55,7 @@ PREFIX = ENV('RESOURCE_PREFIX', 'hackaton')
 RESOURCE_GROUP_LOCATION = ENV('RESOURCE_GROUP_LOCATION', 'eastus')
 MYSQL_PORT = 3306
 
-ObjectStorageHandle = namedtuple('ObjectStorageHandle', ['blob_client', 'container_name'])
+ObjectStorageHandle = namedtuple('ObjectStorageHandle', ['blob_service_client', 'container_name'])
 StorageHandle = namedtuple('StorageHandle', ['account_name', 'account_key'])
 MysqlHandle = namedtuple('MysqlHandle', ['user', 'password', 'host', 'port', 'database', 'connect_args', 'connector'])
 
@@ -119,41 +119,36 @@ def create_object_storage_instance():
 
     :returns: a handle to the object storage instance in a format that other functions in this file can use.
     """
-
-    # TODO
-
     
     resource_group_name = '{}storage{}'.format(PREFIX, _random_string(20))
     container_name = '{}container'.format(PREFIX)
 
     with _deploy_resource_group(resource_group_name, RESOURCE_GROUP_LOCATION):
 
-        storage_account_name = '{}storage{}'.format(PREFIX, _random_string(20)).lower()[:24]
+        account_name = '{}storage{}'.format(PREFIX, _random_string(20)).lower()[:24]
+        protocol = "https"
 
         try:
             storage = _deploy_storage(
                 resource_group_name=resource_group_name,
                 location=RESOURCE_GROUP_LOCATION,
-                account_name=storage_account_name,
+                account_name=account_name,
             )
 
-            blob_client = BlockBlobService(
-                account_name=storage.account_name,
-                account_key=storage.account_key,
-            )
+            account_url = "{}://{}.blob.core.windows.net".format(protocol, account_name)
+            blob_service_client = BlobServiceClient.from_connection_string(account_url)
+            blob_service_client.create_container(container_name)
 
-            blob_client.create_container(container_name, fail_on_exist=False)
         except ClientException as ex:
-            LOG.debug('Error in storage account %s or container %s: %s', storage_account_name, container_name, ex)
+            LOG.debug('Error in storage account %s or container %s: %s', account_name, container_name, ex)
             raise
         else:
-            LOG.debug('Storage account %s and container %s are available', storage_account_name, container_name)
+            LOG.debug('Storage account %s and container %s are available', account_name, container_name)
 
         yield ObjectStorageHandle(
-            blob_client=blob_client,
-            container_name=container_name,
+            blob_service_client=blob_service_client,
+            container_name=container_name
         )
-
 
 def object_storage_list(handle):
     """List all objects contained inside the object store.
@@ -161,8 +156,10 @@ def object_storage_list(handle):
     :param handle: handle provided by :func:`~create_object_storage_instance`.
     :returns: a list of object names.
     """
-    return [blob.name for blob in handle.blob_client.list_blobs(handle.container_name)]
 
+    container = handle.blob_service_client.get_container_client(handle.container_name)
+    blob_list = container.list_blobs()
+    return [blob.name for blob in blob_list]
 
 def object_storage_delete(handle, path):
     """Delete an object on the storage.
@@ -170,8 +167,9 @@ def object_storage_delete(handle, path):
     :param handle: handle provided by :func:`~create_object_storage_instance`.
     :param path: path of the object to delete.
     """
-    handle.blob_client.delete_blob(handle.container_name, path)
-
+    
+    blob_client = BlobClient(path)    
+    blob_client.delete_blob()
 
 def object_storage_write(handle, path, data):
     """Write the data held in memory to the object storage instance.
@@ -180,8 +178,9 @@ def object_storage_write(handle, path, data):
     :param path: path of the object to write.
     :param data: the bytes to write.
     """
-    handle.blob_client.create_blob_from_bytes(handle.container_name, path, data)
 
+    blob_client = BlobClient(path)
+    blob_client.upload_blob(data)
 
 def object_storage_read(handle, path):
     """Read data from the object storage instance.
@@ -190,8 +189,9 @@ def object_storage_read(handle, path):
     :param path: path of the object to read.
     :returns: the bytes read from the storage.
     """
-    return handle.blob_client.get_blob_to_bytes(handle.container_name, path).content
-
+    
+    blob_client = BlobClient(path)
+    return blob_client.download_blob()
 
 # Block storage specific helpers to create, destroy and attach resources.
 
@@ -358,6 +358,7 @@ def _deploy_storage(
     LOG.debug('Done creating storage account %s', account_name)
 
     LOG.debug('Fetching access keys for storage account %s', account_name)
+
     account_key = client.storage_accounts.list_keys(
         resource_group_name=resource_group_name,
         account_name=account_name,
