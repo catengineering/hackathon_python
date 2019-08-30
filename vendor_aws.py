@@ -35,8 +35,8 @@ from base64 import b64encode
 
 ComputeHandle = namedtuple('ComputeHandle', ['host', 'port', 'username'])
 
-AWS_ACCESS_KEY_ID = "AKIAUMTKTERTK34TG3UC"
-AWS_SECRET_ACCESS_KEY = "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"
+AWS_ACCESS_KEY_ID = ""
+AWS_SECRET_ACCESS_KEY = ""
 AWS_REGION = "us-west-2"
 AWS_AVAILABILITY_ZONE = "us-west-2a"
 VPC_NAME = "sample_VPC"
@@ -183,6 +183,8 @@ def create_compute_ssh_client(compute):
     #client.load_system_host_keys()
     file_loc = os.path.expanduser("~\Documents\keys\sample_hack.pem")
     privkey = paramiko.RSAKey.from_private_key_file(file_loc)
+    import pdb;
     client.connect(hostname=compute.host, port=compute.port, username=compute.username, pkey=privkey)
+    pdb.set_trace()
 
     return client
