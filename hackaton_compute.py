@@ -130,11 +130,11 @@ def deploy_vm_networking(
 
 def deploy_vm(
     resource_group_name: str,
+    location: str,
     vm_name: str,
     admin_user_name: str,
-    public_key: str,
     nic_id: str,
-    location: str,
+    public_key: str,
     compute_management_client: ComputeManagementClient
 ) -> VirtualMachine:
     """Create a virtual machine

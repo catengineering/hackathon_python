@@ -116,7 +116,7 @@ def create_compute_instance(resource_group_name):
     
     subnet_id = deploy_shared_network(resource_group_name, RESOURCE_GROUP_LOCATION, network_client)
     nic_id, public_ip = deploy_vm_networking(resource_group_name, RESOURCE_GROUP_LOCATION, vm_name, subnet_id, network_client)
-    vm = deploy_vm(resource_group_name, vm_name, ADMIN_USERNAME, RESOURCE_GROUP_LOCATION, nic_id, ssh_public_key, compute_client)
+    vm = deploy_vm(resource_group_name, RESOURCE_GROUP_LOCATION, vm_name, ADMIN_USERNAME, nic_id, ssh_public_key, compute_client)
     
     yield ComputeHandle(resource_group=resource_group_name, name=vm_name, host=public_ip, port=22, username=ADMIN_USERNAME)
 
