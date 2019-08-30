@@ -7,17 +7,17 @@ from vendor import create_compute_ssh_client, create_compute_instance
 
 
 @contextlib.contextmanager
-def new_compute_instance():
+def new_compute_instance(resource_group_name):
     # vendor import moved inside call to break circular import. This function
     # ought to be moved into vendor, but it also should not be modified by the
     # vendor.
-    with create_compute_instance() as node:
+    with create_compute_instance(resource_group_name) as node:
         yield create_compute_ssh_client(node)
 
 
 @test
-def test_multiple_compute():
-    with new_compute_instance() as compute1, new_compute_instance() as compute2:
+def test_multiple_compute(resource_group_name):
+    with new_compute_instance(resource_group_name) as compute1, new_compute_instance(resource_group_name) as compute2:
         compute1.open_sftp().file("seen", 'wb').close()
         try:
             compute2.open_sftp().file("seen", 'rb').close()
@@ -27,8 +27,8 @@ def test_multiple_compute():
 
 
 @test
-def test_linux_userland():
-    with new_compute_instance() as client:
+def test_linux_userland(resource_group_name):
+    with new_compute_instance(resource_group_name) as client:
         assert file_exists(client, "testing") == False, \
             "test file already exists on the target sytem"
 

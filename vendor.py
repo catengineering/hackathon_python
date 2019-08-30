@@ -96,7 +96,7 @@ def teardown_environment():
 
 @metrics
 @contextlib.contextmanager
-def create_compute_instance():
+def create_compute_instance(resource_group_name):
     """
     Create a new compute instance from a Linux VM Image. It should be completely
     new, and created dynamically at call time.
@@ -105,7 +105,6 @@ def create_compute_instance():
     that other functions in this file can use (such as
     `create_object_storage_instance`).
     """
-    COMPUTE_RESOURCE_GROUP_NAME='{}comp{}'.format(PREFIX, _random_string(20))
 
     def _deploy_shared_network(resource_group_name, location, vnet_name='virtualNetwork'):
         client = _new_client(NetworkManagementClient)
@@ -248,12 +247,11 @@ def create_compute_instance():
     with open(SSH_PUBLIC_KEY, 'r') as f:
         ssh_public_key = f.read()
 
-    with _deploy_resource_group(COMPUTE_RESOURCE_GROUP_NAME, RESOURCE_GROUP_LOCATION):
-        subnet_id = _deploy_shared_network(COMPUTE_RESOURCE_GROUP_NAME, RESOURCE_GROUP_LOCATION)
-        nic_id, public_ip = _deploy_vm_network(COMPUTE_RESOURCE_GROUP_NAME, vm_name, subnet_id=subnet_id, location=RESOURCE_GROUP_LOCATION)
-        vm = _deploy_vm(COMPUTE_RESOURCE_GROUP_NAME, vm_name, admin_user_name=ADMIN_USERNAME, location=RESOURCE_GROUP_LOCATION, nic_id=nic_id, public_key=ssh_public_key)
+    subnet_id = _deploy_shared_network(resource_group_name, RESOURCE_GROUP_LOCATION)
+    nic_id, public_ip = _deploy_vm_network(resource_group_name, vm_name, subnet_id=subnet_id, location=RESOURCE_GROUP_LOCATION)
+    _deploy_vm(resource_group_name, vm_name, admin_user_name=ADMIN_USERNAME, location=RESOURCE_GROUP_LOCATION, nic_id=nic_id, public_key=ssh_public_key)
 
-        yield ComputeHandle(resource_group=COMPUTE_RESOURCE_GROUP_NAME, name=vm_name, host=public_ip, port=22, username=ADMIN_USERNAME)
+    yield ComputeHandle(resource_group=resource_group_name, name=vm_name, host=public_ip, port=22, username=ADMIN_USERNAME)
 
 
 def create_compute_ssh_client(compute):
@@ -278,41 +276,38 @@ def create_compute_ssh_client(compute):
 
 @metrics
 @contextmanager
-def create_object_storage_instance():
+def create_object_storage_instance(resource_group_name):
     """Create a new object storage instance.
 
     :returns: a handle to the object storage instance in a format that other functions in this file can use.
     """
-    resource_group_name = '{}storage{}'.format(PREFIX, _random_string(20))
     container_name = '{}container'.format(PREFIX)
 
-    with _deploy_resource_group(resource_group_name, RESOURCE_GROUP_LOCATION):
+    #storage_account_name = '{}storage{}'.format(PREFIX, _random_string(20)).lower()[:24]
 
-        #storage_account_name = '{}storage{}'.format(PREFIX, _random_string(20)).lower()[:24]
-
-        try:
-            storage = _deploy_storage(
-                resource_group_name=resource_group_name,
-                location=RESOURCE_GROUP_LOCATION,
-                #account_name=storage_account_name,
-            )
-
-            blob_client = BlockBlobService(
-                account_name=storage.account_name,
-                account_key=storage.account_key,
-            )
-
-            blob_client.create_container(container_name, fail_on_exist=False)
-        except ClientException as ex:
-            LOG.debug('Error in storage account %s or container %s: %s', storage.account_name, container_name, ex)
-            raise
-        else:
-            LOG.debug('Storage account %s and container %s are available', storage.account_name, container_name)
-
-        yield ObjectStorageHandle(
-            blob_client=blob_client,
-            container_name=container_name,
+    try:
+        storage = _deploy_storage(
+            resource_group_name=resource_group_name,
+            location=RESOURCE_GROUP_LOCATION,
+            #account_name=storage_account_name,
         )
+
+        blob_client = BlockBlobService(
+            account_name=storage.account_name,
+            account_key=storage.account_key,
+        )
+
+        blob_client.create_container(container_name, fail_on_exist=False)
+    except ClientException as ex:
+        LOG.debug('Error in storage account %s or container %s: %s', storage.account_name, container_name, ex)
+        raise
+    else:
+        LOG.debug('Storage account %s and container %s are available', storage.account_name, container_name)
+
+    yield ObjectStorageHandle(
+        blob_client=blob_client,
+        container_name=container_name,
+    )
 
 
 def object_storage_list(handle):
@@ -358,7 +353,7 @@ def object_storage_read(handle, path):
 
 @metrics
 @contextlib.contextmanager
-def create_block_storage_instance():
+def create_block_storage_instance(resource_group_name):
     """
     Create a new block storage instance, which can be attached to a specific
     compute instance.
@@ -367,26 +362,24 @@ def create_block_storage_instance():
     in a format that other functions in this file can use.
     """
     client = _new_client(ComputeManagementClient)
-    resource_group_name = '{}compute{}'.format(PREFIX, _random_string(20))
     disk_name = 'disk'
     
-    with _deploy_resource_group(resource_group_name, RESOURCE_GROUP_LOCATION):
-        disk = client.disks.create_or_update(
-            resource_group_name,
-            disk_name,
-            disk={
-                "location": RESOURCE_GROUP_LOCATION,
-                "sku":{
-                    "name": "Standard_LRS"
-                },
-                "creationData": {
-                    "createOption": "Empty"
-                },
-                "diskSizeGB": 1
-            }
-        )
-        disk_definition = disk.result()
-        yield BlockStorageHandle(disk_definition.id, resource_group_name, name=disk_definition.name)
+    disk = client.disks.create_or_update(
+        resource_group_name,
+        disk_name,
+        disk={
+            "location": RESOURCE_GROUP_LOCATION,
+            "sku":{
+                "name": "Standard_LRS"
+            },
+            "creationData": {
+                "createOption": "Empty"
+            },
+            "diskSizeGB": 1
+        }
+    )
+    disk_definition = disk.result()
+    yield BlockStorageHandle(disk_definition.id, resource_group_name, name=disk_definition.name)
 
 
 def attach_block_storage_to_compute(compute_handle, storage_handle):
@@ -439,29 +432,27 @@ def remove_block_storage_from_compute(compute_handle, storage_handle):
 
 @metrics
 @contextlib.contextmanager
-def create_relational_database_instance():
+def create_relational_database_instance(resource_group_name):
     """
     Create a new relational database instance.
 
     This context manager should yield a handle to the relational database
     instance, in a format that other functions in this file can use.
     """
-    resource_group_name = '{}mysql{}'.format(PREFIX, _random_string(20))
     administrator_login = ENV('MYSQL_ADMIN_LOGIN', 'hackaton')
     administrator_login_password = ENV('MYSQL_ADMIN_PASSWORD', "Don't_hardCode-this!12345!")
     # server_name = '{}{}'.format(PREFIX, _random_string(20)).lower()
     # database_name = '{}db'.format(PREFIX)
 
-    with _deploy_resource_group(resource_group_name, RESOURCE_GROUP_LOCATION):
-        mysql = _deploy_mysql(
-            resource_group_name=resource_group_name,
-            location=RESOURCE_GROUP_LOCATION,
-            administrator_login=administrator_login,
-            administrator_login_password=administrator_login_password,
-            # server_name=server_name,
-            # database_name=database_name,
-        )
-        yield mysql
+    mysql = _deploy_mysql(
+        resource_group_name=resource_group_name,
+        location=RESOURCE_GROUP_LOCATION,
+        administrator_login=administrator_login,
+        administrator_login_password=administrator_login_password,
+        # server_name=server_name,
+        # database_name=database_name,
+    )
+    yield mysql
 
 
 def create_relational_database_client(handle):

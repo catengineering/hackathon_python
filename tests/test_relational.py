@@ -47,8 +47,8 @@ class User(Base):
 NUM_OF_INSERT = 10
 
 @test
-def test_relational_instance():
-    with create_relational_database_instance() as handle:
+def test_relational_instance(resource_group_name):
+    with create_relational_database_instance(resource_group_name) as handle:
         engine = create_relational_database_client(handle)
         Base.metadata.create_all(engine)
         Session = sessionmaker(bind=engine)

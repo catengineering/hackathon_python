@@ -15,10 +15,10 @@ from vendor import (
 
 
 @test
-def test_block_storage():
-    with create_block_storage_instance() as block, \
-            create_compute_instance() as compute1, \
-            create_compute_instance() as compute2:
+def test_block_storage(resource_group_name):
+    with create_block_storage_instance(resource_group_name) as block, \
+            create_compute_instance(resource_group_name) as compute1, \
+            create_compute_instance(resource_group_name) as compute2:
 
         phrase = b"Nobody inspects the spammish repetition"
 
