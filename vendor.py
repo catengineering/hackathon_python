@@ -282,7 +282,6 @@ def attach_block_storage_to_compute(compute_handle, storage_handle):
 
 
 def remove_block_storage_from_compute(compute_handle, storage_handle):
-    print("remove_block_storage_from_compute")
     with create_compute_ssh_client(compute_handle) as ssh:
         stdin, stdout, stderr = ssh.exec_command("sudo sync")
         LOG.debug("%s %s", stdout.read(), stderr.read())
