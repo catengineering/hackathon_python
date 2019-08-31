@@ -24,10 +24,12 @@ ComputeHandle = namedtuple("ComputeHandle", ["host", "port", "username", "instan
 
 AWS_ACCESS_KEY_ID = ""
 AWS_SECRET_ACCESS_KEY = ""
+PATH_TO_PEM_FILE = os.path.join(os.getcwd(), "sample_hack.pem")
+
 AWS_REGION = "us-west-2"
 AWS_AVAILABILITY_ZONE = "us-west-2a"
 VPC_NAME = "sample_vpc"
-ADMIN_USERNAME = "ec2-user"
+ADMIN_USERNAME = ""
 
 
 ec2 = boto3.resource(
@@ -82,7 +84,7 @@ def create_compute_instance():
             VpcId=vpc.id, EnableDnsHostnames={"Value": True}
         )
 
-        # Assign name to the vpc
+        # Assign name to the vpc (Not required)
         vpc.create_tags(Tags=[{"Key": "Name", "Value": vpc_name}])
         vpc.wait_until_available()
 
@@ -92,7 +94,7 @@ def create_compute_instance():
 
         # Create Route Table (public route)
         route_table = vpc.create_route_table()
-        route_table.create_route(
+        route_ig_ipv4 = route_table.create_route(
             DestinationCidrBlock="0.0.0.0/0",
             GatewayId=internet_gateway.internet_gateway_id,
         )
@@ -172,10 +174,7 @@ def create_compute_ssh_client(compute):
     """
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    # client.load_system_host_keys()
-    # Please change me to point me to env. variable
-    file_loc = os.path.expanduser("~\Documents\keys\sample_hack.pem")
-    privkey = paramiko.RSAKey.from_private_key_file(file_loc)
+    privkey = paramiko.RSAKey.from_private_key_file(PATH_TO_PEM_FILE)
     client.connect(
         hostname=compute.host,
         port=compute.port,
@@ -215,6 +214,7 @@ def object_storage_delete(handle, path):
     Given the object yielded by the `create_object_storage_instance` context
     manager (`handle)`, delete the object at `path`.
     """
+
     raise NotImplementedError("object_storage_delete is not implemented")
 
 
@@ -276,6 +276,7 @@ def attach_block_storage_to_compute(compute_handle, storage_handle):
                 remote.write(script.read())
 
         stdin, stdout, stderr = ssh.exec_command("/bin/bash /tmp/mount_data_disk.sh")
+        LOG.debug("%s %s", stdout.read(), stderr.read())
 
     return "/datadisk/demo"
 
@@ -283,6 +284,8 @@ def attach_block_storage_to_compute(compute_handle, storage_handle):
 def remove_block_storage_from_compute(compute_handle, storage_handle):
     print("remove_block_storage_from_compute")
     with create_compute_ssh_client(compute_handle) as ssh:
+        stdin, stdout, stderr = ssh.exec_command("sudo sync")
+        LOG.debug("%s %s", stdout.read(), stderr.read())
         stdin, stdout, stderr = ssh.exec_command("sudo umount /dev/xvdf1")
         LOG.debug("%s %s", stdout.read(), stderr.read())
 
