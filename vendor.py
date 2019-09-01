@@ -6,6 +6,7 @@ from collections import namedtuple
 import os
 import contextlib
 import logging
+import uuid
 import paramiko
 import boto3
 from tests.metrics import metrics
@@ -202,7 +203,7 @@ def create_object_storage_instance():
     This context manager should yield a handle to the object storage instance,
     in a format that other functions in this file can use.
     """
-    bucket_object = s3_resource.create_bucket(Bucket='testbuc4etsample1234561f23df01', CreateBucketConfiguration={
+    bucket_object = s3_resource.create_bucket(Bucket=str(uuid.uuid4()), CreateBucketConfiguration={
     'LocationConstraint': AWS_REGION})
     bucket_name = bucket_object.name
 
