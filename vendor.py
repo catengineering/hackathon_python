@@ -47,6 +47,11 @@ ec2_client = boto3.client(
 )
 
 
+s3_resource = boto3.resource('s3', region_name=AWS_REGION,
+    aws_access_key_id=AWS_ACCESS_KEY_ID,
+    aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+)
+
 def setup_environment():
     """
     Preform any initial configuring of the environment needed to preform any
@@ -197,8 +202,11 @@ def create_object_storage_instance():
     This context manager should yield a handle to the object storage instance,
     in a format that other functions in this file can use.
     """
-    raise NotImplementedError("create_object_storage_instance is not implemented")
-    yield None
+    bucket_object = s3_resource.create_bucket(Bucket='testbuc4etsample1234561f23df01', CreateBucketConfiguration={
+    'LocationConstraint': AWS_REGION})
+    bucket_name = bucket_object.name
+
+    yield bucket_name
 
 
 def object_storage_list(handle):
@@ -206,8 +214,11 @@ def object_storage_list(handle):
     Given the object yielded by the `create_object_storage_instance` context
     manager (`handle)`, list all objects contained inside the object store.
     """
-    raise NotImplementedError("object_storage_list is not implemented")
+    keys = []
+    for file in s3_resource.Bucket(handle).objects.all():
+        keys.append(file.key)
 
+    return keys
 
 def object_storage_delete(handle, path):
     """
@@ -215,7 +226,7 @@ def object_storage_delete(handle, path):
     manager (`handle)`, delete the object at `path`.
     """
 
-    raise NotImplementedError("object_storage_delete is not implemented")
+    s3_resource.Object(handle, path).delete()
 
 
 def object_storage_write(handle, path, data):
@@ -226,7 +237,7 @@ def object_storage_write(handle, path, data):
 
     Calls to read that path must return the data bytes as held in memory here.
     """
-    raise NotImplementedError("object_storage_write is not implemented")
+    s3_resource.Object(handle, path).put(Body=data)
 
 
 def object_storage_read(handle, path):
@@ -235,7 +246,7 @@ def object_storage_read(handle, path):
     manager (`handle`), read the data present in the remote object storage instance
     stored at `path`, and return that data completely read into memory.
     """
-    raise NotImplementedError("object_storage_read is not implemented")
+    return s3_resource.Object(handle, path).get()['Body'].read()
 
 
 # Block storage specific helpers to create, destroy and attach resources.
