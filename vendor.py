@@ -13,25 +13,26 @@ from tests.metrics import metrics
 
 CWD = Path(__file__).resolve().parent
 
-LOG = logging.getLogger("vendor")
-LOG.setLevel(os.getenv("LOG_LEVEL", "WARNING"))
-LOG.addHandler(logging.StreamHandler())
 
 ##############################################################################
 # Global variables and type definitions
 ##############################################################################
 
+LOG = logging.getLogger("vendor")
+LOG.setLevel(os.getenv("LOG_LEVEL", "WARNING"))
+LOG.addHandler(logging.StreamHandler())
+
+AWS_ACCESS_KEY_ID = os.environ('AWS_ACCESS_KEY_ID')
+AWS_SECRET_ACCESS_KEY = os.environ('AWS_SECRET_ACCESS_KEY')
+
+# The script below assumes the Key (named: "sample_hack") is already created/uploaded in AWS. The .pem file is referenced here.
+PATH_TO_PEM_FILE = os.path.join(os.getcwd(), "resources", "sample_hack.pem")
+
 ComputeHandle = namedtuple("ComputeHandle", ["host", "port", "username", "instanceid"])
-
-AWS_ACCESS_KEY_ID = ""
-AWS_SECRET_ACCESS_KEY = ""
-PATH_TO_PEM_FILE = os.path.join(os.getcwd(), "sample_hack.pem")
-
 AWS_REGION = "us-west-2"
 AWS_AVAILABILITY_ZONE = "us-west-2a"
 VPC_NAME = "sample_vpc"
-ADMIN_USERNAME = ""
-
+ADMIN_USERNAME = "ec2-user"
 
 ec2 = boto3.resource(
     "ec2",
@@ -48,10 +49,13 @@ ec2_client = boto3.client(
 )
 
 
-s3_resource = boto3.resource('s3', region_name=AWS_REGION,
+s3_resource = boto3.resource(
+    "s3",
+    region_name=AWS_REGION,
     aws_access_key_id=AWS_ACCESS_KEY_ID,
     aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
 )
+
 
 def setup_environment():
     """
@@ -203,8 +207,10 @@ def create_object_storage_instance():
     This context manager should yield a handle to the object storage instance,
     in a format that other functions in this file can use.
     """
-    bucket_object = s3_resource.create_bucket(Bucket=str(uuid.uuid4()), CreateBucketConfiguration={
-    'LocationConstraint': AWS_REGION})
+    bucket_object = s3_resource.create_bucket(
+        Bucket=str(uuid.uuid4()),
+        CreateBucketConfiguration={"LocationConstraint": AWS_REGION},
+    )
     bucket_name = bucket_object.name
 
     yield bucket_name
@@ -220,6 +226,7 @@ def object_storage_list(handle):
         keys.append(file.key)
 
     return keys
+
 
 def object_storage_delete(handle, path):
     """
@@ -247,7 +254,7 @@ def object_storage_read(handle, path):
     manager (`handle`), read the data present in the remote object storage instance
     stored at `path`, and return that data completely read into memory.
     """
-    return s3_resource.Object(handle, path).get()['Body'].read()
+    return s3_resource.Object(handle, path).get()["Body"].read()
 
 
 # Block storage specific helpers to create, destroy and attach resources.
