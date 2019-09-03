@@ -25,17 +25,17 @@ LOG = logging.getLogger("vendor")
 LOG.setLevel(os.getenv("LOG_LEVEL", "WARNING"))
 LOG.addHandler(logging.StreamHandler())
 
-AWS_ACCESS_KEY_ID = os.environ(AWS_ACCESS_KEY_ID)
-AWS_SECRET_ACCESS_KEY = os.environ(AWS_SECRET_ACCESS_KEY)
+AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID')
+AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY')
 
-# The script below assumes the Key (named: "sample_hack") is already created/uploaded in AWS. The .pem file is referenced here.
-PATH_TO_PEM_FILE = os.path.join(os.getcwd(), "resources", "sample_hack.pem")
+# The script below assumes the Key (named: "sample_key") is already created/uploaded in AWS. The .pem file is referenced here.
+PATH_TO_PEM_FILE = os.path.join(os.getcwd(), "resources", "sample_key.pem")
 
 ComputeHandle = namedtuple("ComputeHandle", ["host", "port", "username", "instanceid"])
 AWS_REGION = "us-west-2"
 AWS_AVAILABILITY_ZONE = "us-west-2a"
 VPC_NAME = "sample_vpc"
-ADMIN_USERNAME = "ec2-user"
+SSH_USERNAME = "ec2-user"
 
 ec2 = boto3.resource(
     "ec2",
@@ -50,7 +50,6 @@ ec2_client = boto3.client(
     aws_access_key_id=AWS_ACCESS_KEY_ID,
     aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
 )
-
 
 s3_resource = boto3.resource(
     "s3",
@@ -118,7 +117,7 @@ def create_compute_instance():
             GatewayId=internet_gateway.internet_gateway_id,
         )
 
-        # Create a subnet in our VPC
+        # Create a subnet in VPC
         subnet = vpc.create_subnet(
             CidrBlock="10.0.0.0/24", AvailabilityZone=availability_zone
         )
@@ -150,7 +149,7 @@ def create_compute_instance():
             InstanceType="t2.micro",
             MaxCount=1,  # Required
             MinCount=1,  # Required
-            KeyName="sample_hack",  # Key already uploaded to AWS
+            KeyName="sample_key",  # Key already uploaded to AWS
             Placement={"AvailabilityZone": availability_zone},
             NetworkInterfaces=[
                 {
@@ -180,7 +179,7 @@ def create_compute_instance():
     )
 
     yield ComputeHandle(
-        host=public_ip, port=22, username=ADMIN_USERNAME, instanceid=instance_id
+        host=public_ip, port=22, username=SSH_USERNAME, instanceid=instance_id
     )
 
 
@@ -193,12 +192,12 @@ def create_compute_ssh_client(compute):
     """
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    privkey = paramiko.RSAKey.from_private_key_file(PATH_TO_PEM_FILE)
+    privatekey = paramiko.RSAKey.from_private_key_file(PATH_TO_PEM_FILE)
     client.connect(
         hostname=compute.host,
         port=compute.port,
         username=compute.username,
-        pkey=privkey,
+        pkey=privatekey,
     )
 
     return client
@@ -348,7 +347,7 @@ def create_relational_database_instance():
     }]
     ec2_client.authorize_security_group_ingress(IpPermissions=permission, GroupName='default')
 
-    db_instance_identifier = 'mysampledb'
+    db_instance_identifier = str(uuid.uuid4())
     password = _generate_postgres_password(10)
 
     rds_response = rds_client.create_db_instance(
@@ -357,7 +356,7 @@ def create_relational_database_instance():
         AllocatedStorage=5,
         DBInstanceClass='db.m3.medium',
         Engine='postgres',
-        MasterUsername=os.environ('DB_USER_NAME'),
+        MasterUsername='admin123',
         MasterUserPassword=password,
         AvailabilityZone=AWS_AVAILABILITY_ZONE,
         PubliclyAccessible=True,
