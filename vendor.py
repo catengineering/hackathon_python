@@ -25,8 +25,8 @@ LOG = logging.getLogger("vendor")
 LOG.setLevel(os.getenv("LOG_LEVEL", "WARNING"))
 LOG.addHandler(logging.StreamHandler())
 
-AWS_ACCESS_KEY_ID = os.environ("AWS_ACCESS_KEY_ID")
-AWS_SECRET_ACCESS_KEY = os.environ("AWS_SECRET_ACCESS_KEY")
+AWS_ACCESS_KEY_ID = os.environ(AWS_ACCESS_KEY_ID)
+AWS_SECRET_ACCESS_KEY = os.environ(AWS_SECRET_ACCESS_KEY)
 
 # The script below assumes the Key (named: "sample_hack") is already created/uploaded in AWS. The .pem file is referenced here.
 PATH_TO_PEM_FILE = os.path.join(os.getcwd(), "resources", "sample_hack.pem")
@@ -338,18 +338,15 @@ def create_relational_database_instance():
     This context manager should yield a handle to the relational database
     instance, in a format that other functions in this file can use.
     """
-    # Create a security group to allow traffic to DB instance
-    security_group = ec2.create_security_group(GroupName="samplegroup",Description='sample group for DB instance')
+    # Add security group ingress rule to allow traffic to DB instance
     permission = [
-        {
-            "IpProtocol": "TCP",
-            "FromPort": 5432,
-            "ToPort": 5432,
-            "IpRanges": [{"CidrIp": "0.0.0.0/0"}],
-        }
-    ]
-
-    security_group.authorize_ingress(IpPermissions=permission)
+    {
+        "IpProtocol": "tcp",
+        "FromPort": 5432,
+        "ToPort": 5432,
+        "IpRanges": [{"CidrIp": "0.0.0.0/0"}],
+    }]
+    ec2_client.authorize_security_group_ingress(IpPermissions=permission, GroupName='default')
 
     db_instance_identifier = 'mysampledb'
     password = _generate_postgres_password(10)
@@ -357,15 +354,13 @@ def create_relational_database_instance():
     rds_response = rds_client.create_db_instance(
         DBName="SQLDBSample",
         DBInstanceIdentifier=db_instance_identifier,
-        #AllocatedStorage=5,
+        AllocatedStorage=5,
         DBInstanceClass='db.m3.medium',
         Engine='postgres',
-        MasterUsername=os.environ('DB_ADMIN_PASSWORD'),
+        MasterUsername=os.environ('DB_USER_NAME'),
         MasterUserPassword=password,
         AvailabilityZone=AWS_AVAILABILITY_ZONE,
         PubliclyAccessible=True,
-        DBSecurityGroups=[''],
-        #StorageType='standard' 
         )
 
     waiter = rds_client.get_waiter('db_instance_available')
