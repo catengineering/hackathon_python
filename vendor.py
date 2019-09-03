@@ -4,12 +4,15 @@ from pathlib import Path
 from collections import namedtuple
 
 import os
+import string
 import contextlib
 import logging
 import uuid
+import sqlalchemy
 import paramiko
 import boto3
 from tests.metrics import metrics
+from secrets import choice
 
 CWD = Path(__file__).resolve().parent
 
@@ -22,8 +25,8 @@ LOG = logging.getLogger("vendor")
 LOG.setLevel(os.getenv("LOG_LEVEL", "WARNING"))
 LOG.addHandler(logging.StreamHandler())
 
-AWS_ACCESS_KEY_ID = os.environ('AWS_ACCESS_KEY_ID')
-AWS_SECRET_ACCESS_KEY = os.environ('AWS_SECRET_ACCESS_KEY')
+AWS_ACCESS_KEY_ID = os.environ("AWS_ACCESS_KEY_ID")
+AWS_SECRET_ACCESS_KEY = os.environ("AWS_SECRET_ACCESS_KEY")
 
 # The script below assumes the Key (named: "sample_hack") is already created/uploaded in AWS. The .pem file is referenced here.
 PATH_TO_PEM_FILE = os.path.join(os.getcwd(), "resources", "sample_hack.pem")
@@ -56,6 +59,12 @@ s3_resource = boto3.resource(
     aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
 )
 
+rds_client = boto3.client(
+    "rds",
+    region_name=AWS_REGION,
+    aws_access_key_id=AWS_ACCESS_KEY_ID,
+    aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+)
 
 def setup_environment():
     """
@@ -329,8 +338,51 @@ def create_relational_database_instance():
     This context manager should yield a handle to the relational database
     instance, in a format that other functions in this file can use.
     """
-    raise NotImplementedError("create_relational_database_instance is not implemented")
-    yield None
+    # Create a security group to allow traffic to DB instance
+    security_group = ec2.create_security_group(GroupName="samplegroup",Description='sample group for DB instance')
+    permission = [
+        {
+            "IpProtocol": "TCP",
+            "FromPort": 5432,
+            "ToPort": 5432,
+            "IpRanges": [{"CidrIp": "0.0.0.0/0"}],
+        }
+    ]
+
+    security_group.authorize_ingress(IpPermissions=permission)
+
+    db_instance_identifier = 'mysampledb'
+    password = _generate_postgres_password(10)
+
+    rds_response = rds_client.create_db_instance(
+        DBName="SQLDBSample",
+        DBInstanceIdentifier=db_instance_identifier,
+        #AllocatedStorage=5,
+        DBInstanceClass='db.m3.medium',
+        Engine='postgres',
+        MasterUsername=os.environ('DB_ADMIN_PASSWORD'),
+        MasterUserPassword=password,
+        AvailabilityZone=AWS_AVAILABILITY_ZONE,
+        PubliclyAccessible=True,
+        DBSecurityGroups=[''],
+        #StorageType='standard' 
+        )
+
+    waiter = rds_client.get_waiter('db_instance_available')
+    waiter.wait(DBInstanceIdentifier=db_instance_identifier)
+
+    describe_response = rds_client.describe_db_instances(DBInstanceIdentifier=db_instance_identifier)
+
+    result = describe_response['DBInstances'][0]
+
+    yield {
+        'user':result['MasterUsername'],
+        'password': password,
+        'host': result['Endpoint']['Address'],
+        'port': 5432,
+        'database': result['DBName'],
+        'protocol': 'postgresql+psycopg2',
+    }
 
 
 def create_relational_database_client(database):
@@ -341,5 +393,32 @@ def create_relational_database_client(database):
     This function is not expected to call `engine.connect()`, the test
     suite will do that on the value returned by this function.
     """
-    raise NotImplementedError("create_relational_database_client is not implemented")
+    conn_string = '{protocol}://{host}:{port}/{database}'.format(**database)
+    rds_credentials = {'user': database['user'], 'password': database['password']}
+
+    engine = sqlalchemy.create_engine(conn_string, connect_args=rds_credentials)
+
     return engine
+
+
+def _generate_postgres_password(length):
+
+    categories = [
+        string.ascii_uppercase,
+        string.ascii_lowercase,
+        string.digits,
+        '$_.+()',
+    ]
+
+    while True:
+        password = ''.join(choice(choice(categories)) for _ in range(length))
+
+        password_is_acceptable = all(
+            any(char in password for char in category)
+            for category in categories
+        )
+
+        if password_is_acceptable:
+            break
+
+    return password

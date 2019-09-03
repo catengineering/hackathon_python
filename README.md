@@ -7,6 +7,7 @@ The environment variables below are necessary to be set for the scenario script 
 |---|---|---|
 | **`AWS_ACCESS_KEY_ID`** |  AWS Access key Id  |
 | **`AWS_SECRET_ACCESS_KEY`** |  AWS Access Secret  |
+| **`DB_ADMIN_PASSWORD`** |  AWS RDS Postgres user name  |
 
 # Setup .pem file
 The empty .pem file is placed in /resources/sample_hack.pem. The content in the file is necessary to be set for the scenario script to work. 

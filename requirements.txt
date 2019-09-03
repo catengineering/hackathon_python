@@ -5,3 +5,6 @@ boto3
 
 # syntax checker
 pylint
+
+# postgres
+psycopg2
