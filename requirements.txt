@@ -1,6 +1,6 @@
 sqlalchemy
 paramiko==2.4.2
-cryptography==2.4.2
+cryptography==3.2
 colorama
 
 azure-cli-core==2.0.72
